@@ -6,6 +6,10 @@ TeraSync helps mechanics, vehicle owners, fleet managers, and industrial technic
 
 > **Graduation project:** TeraSync is being developed as a practical marketplace prototype for the Ethiopian spare-parts market. The repository combines a domain-focused TypeScript backend foundation, a visual catalog, and detailed product and business specifications for the MVP.
 
+## Project role
+
+TeraSync is independently designed and developed by the project author. The author is responsible for the product idea, requirements analysis, system design, backend and catalog implementation, documentation, testing, and planned feature development. This repository represents an individual graduation project rather than a collaborative team submission.
+
 ## Why TeraSync?
 
 Finding spare parts in Addis Ababa is often slow and uncertain:
