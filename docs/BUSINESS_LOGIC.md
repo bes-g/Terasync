@@ -8,7 +8,18 @@
 
 ## 1. Accounts and access
 
-Full auth rules are in PROJECT_CONTEXT.md section 10b (one phone + OTP login, roles BUYER / VENDOR / COURIER / ADMIN, statuses ACTIVE / PENDING_APPROVAL / SUSPENDED, ownership rules, permission matrix). Everything below assumes those rules.
+Authentication is email + password + 6-digit email verification code sent via SMTP (or console provider in non-production environments).
+- **Identity:** Email address (normalized to lowercase, unique index).
+- **Passwords:** Minimum 10 characters, at least 1 letter and 1 number, hashed with Argon2id / bcrypt (cost 12+), common dictionary password rejection.
+- **Verification & 2FA Codes:** 6-digit cryptographically secure codes (single-use, hashed at rest, 10-minute expiry, max 5 attempts, 60s resend cooldown, max 5 resends/hr) with separate purposes (`VERIFY_EMAIL`, `LOGIN`, `RESET_PASSWORD`).
+- **Phone Number:** Optional profile field (not the login identity). Required later during profile onboarding for courier dispatch / delivery contact and the 4-digit physical inspection escrow PIN.
+- **Trusted Devices:** Optional 30-day trusted device cookie token (stored hashed) that skips the login code on recognized devices.
+- **Roles:** BUYER, VENDOR, COURIER, ADMIN (ADMIN is created only via seed credentials from env and cannot self-register).
+- **Statuses & Activation:**
+  - `BUYER`: Status becomes `ACTIVE` immediately upon email verification.
+  - `VENDOR` and `COURIER`: Status remains `PENDING_APPROVAL` after email verification until an administrator reviews and approves their business/vehicle credentials.
+  - Unverified users cannot sign in.
+- **Security & Privacy:** No account enumeration (signup, login, and forgot-password responses do not reveal account existence; timing parity maintained via dummy hash comparison on unknown emails). Rate limits: 5 failed logins per 15 minutes per email/IP triggers a 15-minute lockout.
 
 ---
 

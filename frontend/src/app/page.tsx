@@ -32,6 +32,9 @@ import {
   PackageCheck,
   Share2,
   User,
+  Trash2,
+  ShoppingBag,
+  Filter,
 } from "lucide-react";
 
 import { AUTOMOTIVE_SYSTEMS, AutomotiveSystem, SinglePartItem } from "../data/systems";
@@ -77,6 +80,108 @@ interface Bid {
   rating: number;
   image: string;
 }
+
+export interface ShopPostItem {
+  id: string;
+  title: string;
+  priceETB: number;
+  category: string;
+  condition: "Brand New OEM" | "Tested Genuine Used" | "High Quality Aftermarket";
+  compatibility: string;
+  shopName: string;
+  marketLocation: string;
+  phone: string;
+  image: string;
+  stock: number;
+  createdAt: string;
+}
+
+const INITIAL_SHOP_POSTS: ShopPostItem[] = [
+  {
+    id: "POST-101",
+    title: "Toyota 1KD-FTV Genuine Turbocharger (CT16V)",
+    priceETB: 48500,
+    category: "Engine & Forced Induction",
+    condition: "Brand New OEM",
+    compatibility: "Toyota Hilux / Fortuner / Prado 3.0 D-4D (2008–2022)",
+    shopName: "Somali Tera ECU & Ignition Tech",
+    marketLocation: "Somali Tera (Block 4, Workshop Lane)",
+    phone: "0933887766",
+    image: "/images/catalog/turbocharger-actuator.jpg",
+    stock: 3,
+    createdAt: "Just now",
+  },
+  {
+    id: "POST-102",
+    title: "Denso 80A Alternator Assembly",
+    priceETB: 16500,
+    category: "Electrical & Ignition",
+    condition: "Brand New OEM",
+    compatibility: "Toyota HiAce Minibus & Hilux 2KD/1KD Diesel",
+    shopName: "Bole Genuine Starters & Alternators",
+    marketLocation: "Teklehaymanot (Shop #18, Electrical Row)",
+    phone: "0911554433",
+    image: "/images/catalog/commercial-alternator.jpg",
+    stock: 6,
+    createdAt: "25m ago",
+  },
+  {
+    id: "POST-103",
+    title: "Brembo Front Ceramic Brake Pad Set",
+    priceETB: 8200,
+    category: "Braking & Safety",
+    condition: "Brand New OEM",
+    compatibility: "Toyota Land Cruiser LC200 / LC300 / Prado 150",
+    shopName: "Alpha Auto Spares",
+    marketLocation: "Teklehaymanot (Shop #42)",
+    phone: "0911223344",
+    image: "/images/catalog/ceramic-brake-pads-set.jpg",
+    stock: 9,
+    createdAt: "1h ago",
+  },
+  {
+    id: "POST-104",
+    title: "Bosch Common Rail Diesel Injector (0445110)",
+    priceETB: 12500,
+    category: "Fuel Injection",
+    condition: "Tested Genuine Used",
+    compatibility: "Isuzu NPR / NQR 4HK1 & Toyota 1KD/2KD",
+    shopName: "Kera Heavy Truck Parts Hub",
+    marketLocation: "Kera (Row 7, Heavy Vehicle Zone)",
+    phone: "0911998877",
+    image: "/images/catalog/common-rail-diesel-injector.jpg",
+    stock: 4,
+    createdAt: "2h ago",
+  },
+  {
+    id: "POST-105",
+    title: "Toyota 1KD/2KD Engine ECU Control Unit",
+    priceETB: 36000,
+    category: "Engine Management",
+    condition: "Tested Genuine Used",
+    compatibility: "Toyota Hilux / HiAce 3.0L Common Rail Diesel",
+    shopName: "Alpha Auto Spares",
+    marketLocation: "Teklehaymanot (Shop #42)",
+    phone: "0911223344",
+    image: "/images/catalog/engine-ecu-control-unit.jpg",
+    stock: 2,
+    createdAt: "3h ago",
+  },
+  {
+    id: "POST-106",
+    title: "Heavy Duty Reduction Starter Motor (2.2kW)",
+    priceETB: 14800,
+    category: "Electrical & Ignition",
+    condition: "Brand New OEM",
+    compatibility: "Toyota HiAce 5L / Hilux 1HZ Commercial",
+    shopName: "Bole Genuine Starters & Alternators",
+    marketLocation: "Teklehaymanot (Shop #18, Electrical Row)",
+    phone: "0911554433",
+    image: "/images/catalog/reduction-starter-motor.jpg",
+    stock: 5,
+    createdAt: "4h ago",
+  },
+];
 
 interface GarageJobCard {
   id: string;
@@ -277,6 +382,83 @@ export default function TeraSyncPlatform() {
   const [rfqGarageLocation, setRfqGarageLocation] = useState<string>("Tadesse Mechanics, Bole Medhanialem");
   const [rfqUrgency, setRfqUrgency] = useState<"CRITICAL_SAME_DAY" | "STANDARD_24H">("CRITICAL_SAME_DAY");
   const [rfqSuccessToast, setRfqSuccessToast] = useState<string | null>(null);
+
+  // Shop Inventory & Storefront Posts state
+  const [shopPosts, setShopPosts] = useState<ShopPostItem[]>(INITIAL_SHOP_POSTS);
+  const [shopFilter, setShopFilter] = useState<string>("ALL");
+  const [orderModalPost, setOrderModalPost] = useState<ShopPostItem | null>(null);
+  const [orderDeliveryAddress, setOrderDeliveryAddress] = useState<string>("Tadesse Garage, Bole Medhanialem");
+  const [orderContactPhone, setOrderContactPhone] = useState<string>("0911223344");
+
+  // Vendor Portal New Post Form state
+  const [newPostTitle, setNewPostTitle] = useState("");
+  const [newPostPrice, setNewPostPrice] = useState("");
+  const [newPostCategory, setNewPostCategory] = useState("Electrical & Ignition");
+  const [newPostCondition, setNewPostCondition] = useState<ShopPostItem["condition"]>("Brand New OEM");
+  const [newPostCompatibility, setNewPostCompatibility] = useState("");
+  const [newPostStock, setNewPostStock] = useState("1");
+  const [newPostImage, setNewPostImage] = useState("/images/catalog/commercial-alternator.jpg");
+
+  const handleCreateShopPost = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPostTitle.trim() || !newPostPrice) return;
+    const priceNum = parseFloat(newPostPrice);
+    if (isNaN(priceNum) || priceNum <= 0) return;
+
+    const activeShopName = currentUser?.shopName || "Alpha Auto Spares";
+    const activeMarket = currentUser?.market
+      ? `${currentUser.market} (${currentUser.street || "Main Workshop Row"})`
+      : "Teklehaymanot (Shop #42)";
+
+    const newPost: ShopPostItem = {
+      id: `POST-${Date.now().toString().slice(-4)}`,
+      title: newPostTitle.trim(),
+      priceETB: priceNum,
+      category: newPostCategory,
+      condition: newPostCondition,
+      compatibility: newPostCompatibility.trim() || "Universal / Addis Commercial Fleet",
+      shopName: activeShopName,
+      marketLocation: activeMarket,
+      phone: currentUser?.phone || "0911223344",
+      image: newPostImage,
+      stock: parseInt(newPostStock) || 1,
+      createdAt: "Just now",
+    };
+
+    setShopPosts((prev) => [newPost, ...prev]);
+    setNewPostTitle("");
+    setNewPostPrice("");
+    setNewPostCompatibility("");
+    setNewPostStock("1");
+    setRfqSuccessToast(`✅ Successfully published "${newPost.title}" to the live marketplace!`);
+    setTimeout(() => setRfqSuccessToast(null), 6000);
+  };
+
+  const handleDeleteShopPost = (id: string) => {
+    const item = shopPosts.find((p) => p.id === id);
+    setShopPosts((prev) => prev.filter((p) => p.id !== id));
+    if (item) {
+      setRfqSuccessToast(`🗑️ Removed "${item.title}" from marketplace listings.`);
+      setTimeout(() => setRfqSuccessToast(null), 4000);
+    }
+  };
+
+  const handleOrderPost = (post: ShopPostItem) => {
+    if (!currentUser) {
+      openAuth("customer");
+      return;
+    }
+    setOrderModalPost(post);
+  };
+
+  const handleConfirmOrder = () => {
+    if (!orderModalPost) return;
+    setRfqSuccessToast(
+      `🎉 Escrow order placed for ${orderModalPost.title} from ${orderModalPost.shopName}! Courier assigned for pickup in ${orderModalPost.marketLocation}.`
+    );
+    setOrderModalPost(null);
+    setTimeout(() => setRfqSuccessToast(null), 7000);
+  };
 
   // Escrow & Handshake state
   const [pinRevealed, setPinRevealed] = useState(false);
@@ -789,17 +971,11 @@ export default function TeraSyncPlatform() {
               onClick={() => setCurrentRole("landing")}
               className="flex items-center gap-2.5 text-left group"
             >
-              <div className="w-9 h-9 rounded-full bg-[#D93A10] flex items-center justify-center font-black text-white text-base shadow-sm group-hover:bg-[#F04A1C] transition">
-                ⚡
-              </div>
-              <div className="flex flex-col">
-                <span className="font-bold text-xl text-[#F5F5F5] tracking-tight group-hover:text-[#FF6A3D] transition">
-                  TeraSync
-                </span>
-                <span className="text-[10px] text-[#B5BAC0] tracking-wider uppercase -mt-0.5 font-light">
-                  Automotive Catalog
-                </span>
-              </div>
+              <img
+                src="/terasync-logo.png"
+                alt="TeraSync Automotive Catalog"
+                className="h-10 w-auto object-contain select-none transition group-hover:opacity-90"
+              />
             </button>
           </div>
 
@@ -1482,7 +1658,118 @@ export default function TeraSyncPlatform() {
               </div>
             </section>
 
-            {/* 6. SHOWCASE SECTION (DEEP RED BACKGROUND) */}
+            {/* =========================================================================
+                6. DIRECT FROM VERIFIED SHOPS & GARAGES (LIVE POSTINGS FEED)
+            ========================================================================= */}
+            <section className="space-y-6 pt-2">
+              <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-bold border border-emerald-500/30 mb-2">
+                    <Store className="w-3.5 h-3.5" />
+                    Live Addis Merchant Inventory Feed
+                  </div>
+                  <h2 className="text-2xl sm:text-[34px] font-bold text-[#F5F5F5] tracking-tight">
+                    Direct From Verified Shops &amp; Garages
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[#B5BAC0] mt-1 font-light">
+                    Browse real-time spare parts posted directly by merchants across Teklehaymanot, Somali Tera, and Kera. Order directly with escrow delivery protection.
+                  </p>
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex flex-wrap items-center gap-2 bg-[#0F1012] p-1.5 rounded-2xl border border-[#3A3F45]">
+                  {["ALL", "Teklehaymanot", "Somali Tera", "Kera"].map((hub) => (
+                    <button
+                      key={hub}
+                      onClick={() => setShopFilter(hub)}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
+                        shopFilter === hub
+                          ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/30"
+                          : "text-[#B5BAC0] hover:text-white"
+                      }`}
+                    >
+                      {hub === "ALL" ? "All Shops & Garages" : hub}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Grid of Shop Posts */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {shopPosts
+                  .filter((post) => shopFilter === "ALL" || post.marketLocation.toLowerCase().includes(shopFilter.toLowerCase()))
+                  .map((post) => (
+                    <div
+                      key={post.id}
+                      className="rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] hover:border-emerald-500/60 transition flex flex-col justify-between overflow-hidden group shadow-xl"
+                    >
+                      <div className="p-5 space-y-3">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#15171A] text-emerald-400 font-bold border border-[#3A3F45]">
+                            {post.id}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 font-semibold text-[10px] border border-emerald-900/80">
+                            {post.condition}
+                          </span>
+                        </div>
+
+                        {/* Image */}
+                        <div className="relative w-full h-44 rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] flex items-center justify-center p-3">
+                          <img
+                            src={post.image}
+                            alt={post.title}
+                            className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="text-[11px] font-semibold text-emerald-400 mb-1 flex items-center gap-1.5">
+                            <Store className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            <span className="truncate">{post.shopName}</span>
+                          </div>
+                          <h4 className="text-sm font-bold text-white group-hover:text-emerald-300 transition line-clamp-2">
+                            {post.title}
+                          </h4>
+                          <p className="text-[11px] text-[#B5BAC0] mt-1">
+                            Fitment: <strong className="text-[#F5F5F5]">{post.compatibility}</strong>
+                          </p>
+                          <p className="text-[10px] text-[#8A8F96] mt-0.5 flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-[#B5BAC0]" />
+                            {post.marketLocation}
+                          </p>
+                        </div>
+
+                        <div className="pt-3 flex items-baseline justify-between border-t border-[#3A3F45]">
+                          <div>
+                            <div className="text-lg font-black text-white font-mono">
+                              {post.priceETB.toLocaleString()} ETB
+                            </div>
+                            <span className="text-[10px] text-[#8A8F96]">
+                              In Stock: <strong className="text-white">{post.stock} units</strong>
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-emerald-400 font-medium bg-emerald-950/60 px-2 py-1 rounded border border-emerald-900/60">
+                            Verified Merchant
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-4 pt-0">
+                        <button
+                          type="button"
+                          onClick={() => handleOrderPost(post)}
+                          className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                        >
+                          <ShoppingBag className="w-4 h-4" />
+                          <span>Order Now (Escrow Handshake)</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </section>
+
+            {/* 7. SHOWCASE SECTION (DEEP RED BACKGROUND) */}
             <section
               id="showcase-section"
               className="bg-deep-red-showcase rounded-3xl p-8 sm:p-12 lg:p-16 border border-[#6A4A44]/70 overflow-hidden relative shadow-2xl"
@@ -2709,6 +2996,217 @@ export default function TeraSyncPlatform() {
               </div>
             </div>
 
+            {/* 1. Post New Part / Inventory Item */}
+            <div className="p-6 rounded-3xl bg-[#0F1012] border border-[#3A3F45] shadow-2xl space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#3A3F45] pb-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[11px] font-bold border border-emerald-500/30 mb-1">
+                    <Plus className="w-3.5 h-3.5" />
+                    Storefront Inventory Manager
+                  </div>
+                  <h3 className="text-lg font-bold text-white">Post New Part for Sale</h3>
+                  <p className="text-xs text-[#B5BAC0]">
+                    Directly list items available in your shop shelf so customers and garages can discover and order immediately.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleCreateShopPost} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {/* Part Title */}
+                  <div className="lg:col-span-2">
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Part Title &amp; Specification <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newPostTitle}
+                      onChange={(e) => setNewPostTitle(e.target.value)}
+                      placeholder="e.g. Toyota Hilux 1KD-FTV Genuine Turbocharger (CT16V)"
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-2.5 text-xs text-[#F5F5F5] focus:border-emerald-500 outline-none transition"
+                    />
+                  </div>
+
+                  {/* Price */}
+                  <div>
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Price in ETB <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min="10"
+                      value={newPostPrice}
+                      onChange={(e) => setNewPostPrice(e.target.value)}
+                      placeholder="e.g. 18500"
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-2.5 text-xs text-[#F5F5F5] font-mono focus:border-emerald-500 outline-none transition"
+                    />
+                  </div>
+
+                  {/* Category */}
+                  <div>
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Category
+                    </label>
+                    <select
+                      value={newPostCategory}
+                      onChange={(e) => setNewPostCategory(e.target.value)}
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-3 py-2.5 text-xs text-[#F5F5F5] focus:border-emerald-500 outline-none transition"
+                    >
+                      <option value="Electrical & Ignition">Electrical &amp; Ignition</option>
+                      <option value="Braking & Safety">Braking &amp; Safety</option>
+                      <option value="Engine & Forced Induction">Engine &amp; Forced Induction</option>
+                      <option value="Fuel Injection">Fuel Injection</option>
+                      <option value="Engine Management">Engine Management (ECU/Sensors)</option>
+                      <option value="Suspension & Steering">Suspension &amp; Steering</option>
+                      <option value="Cooling & Climate">Cooling &amp; Climate</option>
+                    </select>
+                  </div>
+
+                  {/* Condition */}
+                  <div>
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Part Condition
+                    </label>
+                    <select
+                      value={newPostCondition}
+                      onChange={(e) => setNewPostCondition(e.target.value as any)}
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-3 py-2.5 text-xs text-[#F5F5F5] focus:border-emerald-500 outline-none transition"
+                    >
+                      <option value="Brand New OEM">Brand New OEM</option>
+                      <option value="Tested Genuine Used">Tested Genuine Used (Japan Cut)</option>
+                      <option value="High Quality Aftermarket">High Quality Aftermarket</option>
+                    </select>
+                  </div>
+
+                  {/* Vehicle Compatibility */}
+                  <div>
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Vehicle Fitment / Compatibility
+                    </label>
+                    <input
+                      type="text"
+                      value={newPostCompatibility}
+                      onChange={(e) => setNewPostCompatibility(e.target.value)}
+                      placeholder="e.g. Toyota HiAce 5L / Hilux 2KD (2010–2021)"
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-2.5 text-xs text-[#F5F5F5] focus:border-emerald-500 outline-none transition"
+                    />
+                  </div>
+
+                  {/* Available Stock */}
+                  <div>
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Available In Stock (Qty)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newPostStock}
+                      onChange={(e) => setNewPostStock(e.target.value)}
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-2.5 text-xs text-[#F5F5F5] font-mono focus:border-emerald-500 outline-none transition"
+                    />
+                  </div>
+
+                  {/* Component Photo Preset */}
+                  <div className="lg:col-span-2">
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                      Shelf Component Reference Photo
+                    </label>
+                    <select
+                      value={newPostImage}
+                      onChange={(e) => setNewPostImage(e.target.value)}
+                      className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-3 py-2.5 text-xs text-[#F5F5F5] focus:border-emerald-500 outline-none transition"
+                    >
+                      <option value="/images/catalog/commercial-alternator.jpg">Alternator Assembly (12V/24V)</option>
+                      <option value="/images/catalog/turbocharger-actuator.jpg">Turbocharger &amp; Actuator</option>
+                      <option value="/images/catalog/ceramic-brake-pads-set.jpg">Ceramic Brake Pads</option>
+                      <option value="/images/catalog/common-rail-diesel-injector.jpg">Common Rail Diesel Injector</option>
+                      <option value="/images/catalog/engine-ecu-control-unit.jpg">Engine ECU Control Computer</option>
+                      <option value="/images/catalog/reduction-starter-motor.jpg">Reduction Starter Motor</option>
+                      <option value="/images/catalog/abs-hydraulic-module-pump.jpg">ABS Hydraulic Pump Module</option>
+                      <option value="/images/catalog/clutch-kit-assembly.jpg">Clutch Kit &amp; Pressure Plate</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-600/30 flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Publish Item to Live Marketplace</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* 2. My Active Shop Posts & Delete Controls */}
+            <div className="p-6 rounded-3xl bg-[#0F1012] border border-[#3A3F45] shadow-2xl space-y-4">
+              <div className="flex items-center justify-between border-b border-[#3A3F45] pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    My Active Storefront Listings
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono font-bold">
+                      {shopPosts.length} Live Items
+                    </span>
+                  </h3>
+                  <p className="text-xs text-[#B5BAC0]">
+                    All items below are visible in real-time to visiting customers and garages. You can delete or manage any post anytime.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {shopPosts.map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-4 rounded-2xl bg-[#15171A] border border-[#3A3F45] hover:border-emerald-500/50 transition flex flex-col justify-between space-y-3"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-emerald-400 font-bold">{item.id}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-900/60 font-semibold">
+                          {item.condition}
+                        </span>
+                      </div>
+
+                      <div className="h-32 w-full rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] p-2 flex items-center justify-center">
+                        <img src={item.image} alt={item.title} className="w-full h-full object-contain" />
+                      </div>
+
+                      <div>
+                        <h4 className="text-sm font-bold text-white line-clamp-1">{item.title}</h4>
+                        <p className="text-[11px] text-[#B5BAC0] mt-0.5">Fitment: {item.compatibility}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-[#3A3F45]/60 text-xs">
+                        <span className="text-emerald-400 font-black font-mono text-sm">
+                          {item.priceETB.toLocaleString()} ETB
+                        </span>
+                        <span className="text-[11px] text-[#B5BAC0]">
+                          Stock: <strong className="text-white">{item.stock}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#3A3F45] flex items-center justify-between">
+                      <span className="text-[10px] text-[#8A8F96]">Posted {item.createdAt}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteShopPost(item.id)}
+                        className="px-3 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/80 border border-red-800/80 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                        <span>Delete Post</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Live Incoming Requests Stream */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -3347,6 +3845,118 @@ export default function TeraSyncPlatform() {
           <span>{currentUser ? "Portal" : "Log in"}</span>
         </button>
       </div>
+
+      {/* Shop Post Order & Escrow Modal */}
+      {orderModalPost && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setOrderModalPost(null)}
+          />
+          <div className="relative bg-[#0F1012] border border-emerald-500/50 rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-[#3A3F45] pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Direct Shop Order &amp; Escrow</h3>
+                  <p className="text-xs text-[#B5BAC0]">Secured with TeraSync 4-Digit Delivery Handshake</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setOrderModalPost(null)}
+                className="text-[#B5BAC0] hover:text-white p-1 rounded-full hover:bg-[#3A3F45]/40"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Item summary */}
+            <div className="p-4 rounded-2xl bg-[#15171A] border border-[#3A3F45] flex items-center gap-4">
+              <div className="w-20 h-20 rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] p-1 shrink-0 flex items-center justify-center">
+                <img
+                  src={orderModalPost.image}
+                  alt={orderModalPost.title}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="space-y-1 min-w-0 flex-1">
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-900 font-semibold">
+                  {orderModalPost.condition}
+                </span>
+                <h4 className="text-sm font-bold text-white truncate">{orderModalPost.title}</h4>
+                <p className="text-xs text-[#B5BAC0] flex items-center gap-1 truncate">
+                  <Store className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  {orderModalPost.shopName} &bull; {orderModalPost.marketLocation}
+                </p>
+                <div className="text-base font-black text-emerald-400 font-mono">
+                  {orderModalPost.priceETB.toLocaleString()} ETB
+                </div>
+              </div>
+            </div>
+
+            {/* Escrow guarantee note */}
+            <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-900/60 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-[#D0D4DA] space-y-1">
+                <span className="font-bold text-white block">Protected Escrow Guarantee</span>
+                <p className="text-[#B5BAC0] text-[11px] leading-relaxed">
+                  Your funds are locked safely in escrow. The courier picks up the part with a numbered tamper seal. Payment is released to {orderModalPost.shopName} only after you inspect the bolt fitment and give your 4-digit PIN.
+                </p>
+              </div>
+            </div>
+
+            {/* Destination & Contact */}
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                  Delivery Destination / Workshop Address
+                </label>
+                <input
+                  type="text"
+                  value={orderDeliveryAddress}
+                  onChange={(e) => setOrderDeliveryAddress(e.target.value)}
+                  placeholder="e.g. Tadesse Garage, Bole Medhanialem"
+                  className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-2.5 text-xs text-[#F5F5F5] focus:border-emerald-500 outline-none transition"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1">
+                  Contact Phone for Courier Delivery
+                </label>
+                <input
+                  type="tel"
+                  value={orderContactPhone}
+                  onChange={(e) => setOrderContactPhone(e.target.value)}
+                  placeholder="0911223344"
+                  className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-2.5 text-xs text-[#F5F5F5] font-mono focus:border-emerald-500 outline-none transition"
+                />
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setOrderModalPost(null)}
+                className="flex-1 py-3 rounded-full bg-[#15171A] hover:bg-[#1E2024] border border-[#3A3F45] text-xs font-semibold text-[#B5BAC0] transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmOrder}
+                className="flex-[2] py-3 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Confirm &amp; Lock Escrow ({orderModalPost.priceETB.toLocaleString()} ETB)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Auth & Onboarding Modal */}
       <AuthModal

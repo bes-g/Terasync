@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useRef, useEffect } from "react";
-import { X, ArrowRight, ChevronLeft, CheckCircle2 } from "lucide-react";
+import { X, ArrowRight, ChevronLeft, CheckCircle2, Mail, Lock, User, Loader2, RefreshCw } from "lucide-react";
 import OnboardingCustomer from "./OnboardingCustomer";
 import OnboardingShop from "./OnboardingShop";
 import OnboardingRider from "./OnboardingRider";
@@ -10,6 +10,8 @@ export type AuthRole = "customer" | "shop" | "rider" | "admin";
 export interface AuthProfile {
   role: AuthRole;
   phone: string;
+  email?: string;
+  fullName?: string;
   firstName?: string;
   lastName?: string;
   make?: string;
@@ -37,22 +39,24 @@ export interface AuthProfile {
   [key: string]: any;
 }
 
-type AuthScreen = "role-pick" | "phone" | "otp" | "onboarding" | "pending-review" | "admin-login";
+type AuthScreen = "role-pick" | "credentials" | "otp" | "onboarding" | "pending-review" | "admin-login";
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAuthComplete: (role: AuthRole, profile: AuthProfile) => void;
   onPendingReview: (role: AuthRole, profile: AuthProfile) => void;
-  /** Set of phone numbers seen before (determines returning vs new user) */
-  knownPhones: Set<string>;
-  onPhoneUsed: (phone: string) => void;
+  knownPhones?: Set<string>;
+  onPhoneUsed?: (phone: string) => void;
   initialRole?: AuthRole | null;
 }
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 const ROLE_CARDS = [
   {
     id: "customer" as AuthRole,
+    backendRole: "BUYER",
     emoji: "🔧",
     title: "Customer",
     subtitle: "Find & request spare parts for my vehicle",
@@ -60,6 +64,7 @@ const ROLE_CARDS = [
   },
   {
     id: "shop" as AuthRole,
+    backendRole: "VENDOR",
     emoji: "🏪",
     title: "Shop Owner",
     subtitle: "List my parts inventory and receive RFQs",
@@ -67,6 +72,7 @@ const ROLE_CARDS = [
   },
   {
     id: "rider" as AuthRole,
+    backendRole: "COURIER",
     emoji: "🛵",
     title: "Delivery Rider",
     subtitle: "Deliver parts across Addis Ababa and earn",
@@ -74,6 +80,7 @@ const ROLE_CARDS = [
   },
   {
     id: "admin" as AuthRole,
+    backendRole: "ADMIN",
     emoji: "🛡️",
     title: "Administrator / Staff",
     subtitle: "Central dispute arbitration, escrow audit & application approvals",
@@ -86,47 +93,62 @@ export default function AuthModal({
   onClose,
   onAuthComplete,
   onPendingReview,
-  knownPhones,
-  onPhoneUsed,
   initialRole = null,
 }: AuthModalProps) {
   const [screen, setScreen] = useState<AuthScreen>("role-pick");
   const [role, setRole] = useState<AuthRole | null>(null);
-  const [phone, setPhone] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+
+  // Form inputs
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  // OTP inputs
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
-  const [otpCode, setOtpCode] = useState("");
   const [otpError, setOtpError] = useState("");
+  const [challengeId, setChallengeId] = useState<string | null>(null);
   const [resendCd, setResendCd] = useState(0);
-  const [isReturning, setIsReturning] = useState(false);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Admin credentials state
-  const [adminUsername, setAdminUsername] = useState("admin@terasync.et");
-  const [adminPin, setAdminPin] = useState("");
+  // Admin login inputs
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
   const [adminError, setAdminError] = useState("");
 
-  // Reset state each time the modal opens
+  // Reset state on open
   useEffect(() => {
     if (isOpen) {
       if (initialRole) {
         setRole(initialRole);
-        setScreen(initialRole === "admin" ? "admin-login" : "phone");
+        if (initialRole === "admin") {
+          setScreen("admin-login");
+        } else {
+          setScreen("credentials");
+        }
       } else {
         setScreen("role-pick");
         setRole(null);
       }
-      setPhone("");
+      setAuthMode("login");
+      setFullName("");
+      setEmail("");
+      setPassword("");
+      setLoading(false);
+      setFormError("");
       setOtp(["", "", "", "", "", ""]);
-      setOtpCode("");
       setOtpError("");
+      setChallengeId(null);
       setResendCd(0);
-      setIsReturning(false);
-      setAdminPin("");
+      setAdminUsername("");
+      setAdminPassword("");
       setAdminError("");
     }
   }, [isOpen, initialRole]);
 
-  // Resend countdown tick
+  // Resend countdown
   useEffect(() => {
     if (resendCd <= 0) return;
     const t = setTimeout(() => setResendCd((c) => c - 1), 1000);
@@ -135,51 +157,115 @@ export default function AuthModal({
 
   if (!isOpen) return null;
 
-  const cleanPhone = phone.replace(/\s/g, "");
-
   const handleSelectRole = (r: AuthRole) => {
     setRole(r);
+    setFormError("");
     if (r === "admin") {
       setScreen("admin-login");
     } else {
-      setScreen("phone");
+      setScreen("credentials");
     }
   };
 
-  const handleAdminLogin = () => {
-    if (adminPin.trim() === "0000" || adminPin.trim() === "admin") {
-      onAuthComplete("admin", {
-        role: "admin",
-        phone: "0911000000",
-        name: "Central Operations Admin",
-        email: adminUsername,
-        clearanceLevel: "TIER_3_OPERATIONS",
-      });
-      onClose();
-    } else {
-      setAdminError("Invalid Security PIN. Use demo master PIN: 0000");
+  const getBackendRole = (r: AuthRole): string => {
+    if (r === "customer") return "BUYER";
+    if (r === "shop") return "VENDOR";
+    if (r === "rider") return "COURIER";
+    return "ADMIN";
+  };
+
+  // Submit Sign In or Sign Up credentials
+  const handleCredentialsSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setFormError("");
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setFormError("Please enter a valid email address");
+      return;
+    }
+    if (password.length < 10) {
+      setFormError("Password must be at least 10 characters long");
+      return;
+    }
+    if (authMode === "signup" && !fullName.trim()) {
+      setFormError("Please enter your full name");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (authMode === "signup") {
+        const res = await fetch(`${API_BASE}/auth/signup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: cleanEmail,
+            password,
+            fullName: fullName.trim(),
+            role: getBackendRole(role!),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message || data?.message || "Registration failed");
+        }
+
+        setResendCd(60);
+        setScreen("otp");
+        setTimeout(() => otpRefs.current[0]?.focus(), 50);
+      } else {
+        // Sign In
+        const res = await fetch(`${API_BASE}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            email: cleanEmail,
+            password,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message || data?.message || "Invalid email or password");
+        }
+
+        if (data.requires2FA) {
+          setChallengeId(data.challengeId);
+          setResendCd(60);
+          setScreen("otp");
+          setTimeout(() => otpRefs.current[0]?.focus(), 50);
+        } else if (data.accessToken) {
+          // Trusted device login bypass
+          if (typeof window !== "undefined") {
+            localStorage.setItem("terasync_access_token", data.accessToken);
+            localStorage.setItem("terasync_refresh_token", data.refreshToken);
+          }
+          const profile: AuthProfile = {
+            role: role!,
+            email: data.user.email,
+            fullName: data.user.fullName,
+            firstName: data.user.fullName?.split(" ")[0] || "User",
+            phone: data.user.phoneNumber || "",
+          };
+          onAuthComplete(role!, profile);
+          onClose();
+        }
+      }
+    } catch (err: any) {
+      setFormError(err.message || "Failed to connect to authentication service");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const sendOtp = () => {
-    if (cleanPhone.length < 9) return;
-    const code = String(Math.floor(1000 + Math.random() * 9000));
-    setOtpCode(code);
-    setOtp(["", "", "", "", "", ""]);
-    setOtpError("");
-    const normalized = cleanPhone.startsWith("0") ? cleanPhone : `0${cleanPhone}`;
-    setIsReturning(knownPhones.has(normalized) || knownPhones.has(cleanPhone));
-    setResendCd(60);
-    setScreen("otp");
-    // Focus first OTP box after render
-    setTimeout(() => otpRefs.current[0]?.focus(), 50);
-  };
-
+  // OTP changes
   const handleOtpChange = (idx: number, val: string) => {
     if (!/^\d?$/.test(val)) return;
     const next = [...otp];
     next[idx] = val;
     setOtp(next);
+    setOtpError("");
     if (val && idx < 5) otpRefs.current[idx + 1]?.focus();
   };
 
@@ -187,28 +273,193 @@ export default function AuthModal({
     if (e.key === "Backspace" && !otp[idx] && idx > 0) {
       otpRefs.current[idx - 1]?.focus();
     }
-    if (e.key === "Enter" && otp.join("").length >= 4) verifyOtp();
+    if (e.key === "Enter" && otp.join("").length === 6) {
+      handleVerifyOtp();
+    }
   };
 
-  const verifyOtp = () => {
-    const entered = otp.join("");
-    if (entered.length < 4) return;
-    if (entered !== otpCode) {
-      setOtpError("Incorrect code — try again.");
+  // Verify 6-digit OTP code
+  const handleVerifyOtp = async () => {
+    const code = otp.join("");
+    if (code.length !== 6) {
+      setOtpError("Please enter the complete 6-digit code");
       return;
     }
-    const normalized = cleanPhone.startsWith("0") ? cleanPhone : `0${cleanPhone}`;
-    onPhoneUsed(normalized);
-    if (isReturning) {
-      onAuthComplete(role!, { role: role!, phone: normalized });
-      onClose();
-    } else {
-      setScreen("onboarding");
+
+    setLoading(true);
+    setOtpError("");
+    const cleanEmail = email.trim().toLowerCase();
+
+    try {
+      if (authMode === "signup") {
+        const res = await fetch(`${API_BASE}/auth/verify-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            email: cleanEmail,
+            code,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message || data?.message || "Invalid or expired verification code");
+        }
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem("terasync_access_token", data.accessToken);
+          localStorage.setItem("terasync_refresh_token", data.refreshToken);
+        }
+
+        // Newly signed up user proceeds to role onboarding
+        setScreen("onboarding");
+      } else {
+        // Sign In verification
+        if (!challengeId) {
+          throw new Error("Challenge ID missing. Please sign in again.");
+        }
+
+        const res = await fetch(`${API_BASE}/auth/login/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            challengeId,
+            code,
+            rememberDevice: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message || data?.message || "Invalid login code");
+        }
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem("terasync_access_token", data.accessToken);
+          localStorage.setItem("terasync_refresh_token", data.refreshToken);
+        }
+
+        const isAdmin = data.user.role === "ADMIN" || role === "admin";
+        const assignedRole: AuthRole = isAdmin ? "admin" : (role || "customer");
+        const profile: AuthProfile = {
+          role: assignedRole,
+          email: data.user.email,
+          fullName: data.user.fullName,
+          firstName: data.user.fullName?.split(" ")[0] || (isAdmin ? "Admin" : "User"),
+          phone: data.user.phoneNumber || "0911000000",
+          clearanceLevel: isAdmin ? "TIER_3_OPERATIONS" : undefined,
+        };
+
+        onAuthComplete(assignedRole, profile);
+        onClose();
+      }
+    } catch (err: any) {
+      setOtpError(err.message || "Verification failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend OTP code
+  const handleResendCode = async () => {
+    if (resendCd > 0) return;
+    setLoading(true);
+    setOtpError("");
+    try {
+      const res = await fetch(`${API_BASE}/auth/code/resend`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          purpose: authMode === "signup" ? "VERIFY_EMAIL" : "LOGIN",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error?.message || data?.message || "Failed to resend code");
+      }
+      if (data.challengeId) {
+        setChallengeId(data.challengeId);
+      }
+      setResendCd(60);
+      setOtp(["", "", "", "", "", ""]);
+      setOtpError("");
+    } catch (err: any) {
+      setOtpError(err.message || "Failed to resend code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Admin login handler
+  const handleAdminLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAdminError("");
+    const cleanUser = adminUsername.trim().toLowerCase();
+    const pass = adminPassword.trim();
+
+    if (!cleanUser || !cleanUser.includes("@")) {
+      setAdminError("Please enter a valid admin email address");
+      return;
+    }
+    if (!pass) {
+      setAdminError("Please enter your admin password");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: cleanUser,
+          password: pass,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error?.message || data?.message || "Admin authentication failed");
+      }
+
+      if (data.requires2FA) {
+        setRole("admin");
+        setEmail(cleanUser);
+        setChallengeId(data.challengeId);
+        setAuthMode("login");
+        setResendCd(60);
+        setScreen("otp");
+        setTimeout(() => otpRefs.current[0]?.focus(), 50);
+      } else {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("terasync_access_token", data.accessToken);
+          localStorage.setItem("terasync_refresh_token", data.refreshToken);
+        }
+        onAuthComplete("admin", {
+          role: "admin",
+          phone: "0911000000",
+          email: cleanUser,
+          fullName: data.user.fullName,
+          clearanceLevel: "TIER_3_OPERATIONS",
+        });
+        onClose();
+      }
+    } catch (err: any) {
+      setAdminError(err.message || "Invalid Admin credentials");
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleOnboardComplete = (profile: Record<string, unknown>) => {
-    const fullProfile: AuthProfile = { role: role!, phone: cleanPhone, ...profile };
+    const fullProfile: AuthProfile = {
+      role: role!,
+      phone: String((profile as any)?.phone || "0911000000"),
+      email: email.trim().toLowerCase(),
+      fullName: fullName.trim() || undefined,
+      ...profile,
+    };
     if (role === "customer") {
       onAuthComplete("customer", fullProfile);
       onClose();
@@ -219,23 +470,20 @@ export default function AuthModal({
   };
 
   const backLabel: Partial<Record<AuthScreen, string>> = {
-    phone: "role-pick",
-    otp: "phone",
+    credentials: "role-pick",
+    otp: "credentials",
     "admin-login": "role-pick",
   };
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/75 backdrop-blur-sm"
-        onClick={onClose}
-      />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
 
       {/* Panel */}
       <div className="relative bg-[#0F1012] border border-[#3A3F45] rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
-        {/* Sticky header */}
-        <div className="shrink-0 border-b border-[#3A3F45] px-6 py-4 flex items-center justify-between rounded-t-3xl">
+        {/* Header */}
+        <div className="shrink-0 border-b border-[#3A3F45] px-6 py-4 flex items-center justify-between rounded-t-3xl bg-[#15171A]">
           <div className="flex items-center gap-3">
             {backLabel[screen] && (
               <button
@@ -246,14 +494,15 @@ export default function AuthModal({
                 <ChevronLeft className="w-5 h-5" />
               </button>
             )}
-            <div className="w-8 h-8 rounded-full bg-[#D93A10] flex items-center justify-center font-black text-white text-sm select-none">
-              ⚡
-            </div>
-            <span className="font-bold text-[#F5F5F5] text-sm">TeraSync</span>
+            <img
+              src="/terasync-logo.png"
+              alt="TeraSync"
+              className="h-8 w-auto object-contain select-none"
+            />
           </div>
           <button
             onClick={onClose}
-            className="text-[#B5BAC0] hover:text-white transition p-1 rounded-full"
+            className="text-[#B5BAC0] hover:text-white transition p-1 rounded-full hover:bg-[#3A3F45]/40"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -262,13 +511,12 @@ export default function AuthModal({
 
         {/* Scrollable body */}
         <div className="overflow-y-auto flex-1 p-6">
-
           {/* ── ROLE PICK ── */}
           {screen === "role-pick" && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-2xl font-bold text-[#F5F5F5]">Who are you?</h2>
-                <p className="text-sm text-[#B5BAC0] mt-1">Choose your portal to get started</p>
+                <p className="text-sm text-[#B5BAC0] mt-1">Select your account type to proceed</p>
               </div>
               <div className="space-y-3">
                 {ROLE_CARDS.map((card) => (
@@ -291,7 +539,7 @@ export default function AuthModal({
                 ))}
               </div>
               <div className="pt-2 border-t border-[#3A3F45]/60 text-center text-xs text-[#B5BAC0]">
-                Internal staff &amp; operations?{" "}
+                Platform Staff &amp; Administrator?{" "}
                 <button
                   className="text-purple-400 hover:text-purple-300 hover:underline font-semibold"
                   onClick={() => handleSelectRole("admin")}
@@ -302,66 +550,155 @@ export default function AuthModal({
             </div>
           )}
 
-          {/* ── PHONE ── */}
-          {screen === "phone" && (
+          {/* ── EMAIL & PASSWORD CREDENTIALS ── */}
+          {screen === "credentials" && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-2xl font-bold text-[#F5F5F5]">Enter your phone</h2>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#D93A10]/20 text-[#FF6A3D] border border-[#D93A10]/30 uppercase tracking-wider">
+                    {role} portal
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold text-[#F5F5F5]">
+                  {authMode === "login" ? "Sign In with Email" : "Create Account"}
+                </h2>
                 <p className="text-sm text-[#B5BAC0] mt-1">
-                  Logging in as{" "}
-                  <span className="text-[#FF6A3D] font-semibold capitalize">{role}</span>.
-                  We&apos;ll send you a code.
+                  {authMode === "login"
+                    ? "Enter your credentials to receive a 6-digit login code in your email inbox."
+                    : "Register your account. We will send an email verification code."}
                 </p>
               </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 bg-[#15171A] border border-[#3A3F45] rounded-2xl px-4 py-3 focus-within:border-[#D93A10] transition">
-                  <span className="text-[#B5BAC0] text-sm font-medium shrink-0 select-none">
-                    🇪🇹 +251
-                  </span>
-                  <div className="w-px h-5 bg-[#3A3F45] shrink-0" />
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/[^\d\s]/g, ""))}
-                    onKeyDown={(e) => e.key === "Enter" && cleanPhone.length >= 9 && sendOtp()}
-                    placeholder="9X XXX XXXX"
-                    maxLength={12}
-                    autoFocus
-                    className="flex-1 bg-transparent text-[#F5F5F5] text-sm font-medium placeholder-[#B5BAC0]/40 outline-none"
-                  />
-                </div>
+
+              {/* Mode Toggle Tabs */}
+              <div className="flex rounded-xl bg-[#15171A] p-1 border border-[#3A3F45]">
                 <button
-                  onClick={sendOtp}
-                  disabled={cleanPhone.length < 9}
-                  className="w-full btn-pill-primary py-3.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  type="button"
+                  onClick={() => { setAuthMode("login"); setFormError(""); }}
+                  className={`flex-1 py-2 text-xs font-semibold rounded-lg transition ${
+                    authMode === "login"
+                      ? "bg-[#D93A10] text-white shadow-sm"
+                      : "text-[#B5BAC0] hover:text-white"
+                  }`}
                 >
-                  Send OTP Code →
+                  Log In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode("signup"); setFormError(""); }}
+                  className={`flex-1 py-2 text-xs font-semibold rounded-lg transition ${
+                    authMode === "signup"
+                      ? "bg-[#D93A10] text-white shadow-sm"
+                      : "text-[#B5BAC0] hover:text-white"
+                  }`}
+                >
+                  Sign Up
                 </button>
               </div>
+
+              <form onSubmit={handleCredentialsSubmit} className="space-y-3.5">
+                {authMode === "signup" && (
+                  <div>
+                    <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
+                      Full Name
+                    </label>
+                    <div className="flex items-center gap-2 bg-[#15171A] border border-[#3A3F45] rounded-xl px-3.5 py-3 focus-within:border-[#D93A10] transition">
+                      <User className="w-4 h-4 text-[#B5BAC0] shrink-0" />
+                      <input
+                        type="text"
+                        required
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        placeholder="e.g. Abebe Kebede"
+                        className="flex-1 bg-transparent text-sm text-[#F5F5F5] placeholder-[#B5BAC0]/40 outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
+                    Email Address
+                  </label>
+                  <div className="flex items-center gap-2 bg-[#15171A] border border-[#3A3F45] rounded-xl px-3.5 py-3 focus-within:border-[#D93A10] transition">
+                    <Mail className="w-4 h-4 text-[#B5BAC0] shrink-0" />
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@gmail.com"
+                      autoFocus
+                      className="flex-1 bg-transparent text-sm text-[#F5F5F5] placeholder-[#B5BAC0]/40 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
+                    Password
+                  </label>
+                  <div className="flex items-center gap-2 bg-[#15171A] border border-[#3A3F45] rounded-xl px-3.5 py-3 focus-within:border-[#D93A10] transition">
+                    <Lock className="w-4 h-4 text-[#B5BAC0] shrink-0" />
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Min 10 characters (letter + number)"
+                      className="flex-1 bg-transparent text-sm text-[#F5F5F5] placeholder-[#B5BAC0]/40 outline-none"
+                    />
+                  </div>
+                  {authMode === "signup" && (
+                    <p className="text-[11px] text-[#B5BAC0] mt-1">Must be at least 10 characters with numbers and letters.</p>
+                  )}
+                </div>
+
+                {formError && (
+                  <div className="bg-red-950/40 border border-red-800/50 rounded-xl px-3.5 py-2.5 text-xs text-red-300">
+                    {formError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full btn-pill-primary py-3.5 text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-[#D93A10]/20"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Contacting Email Service...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{authMode === "login" ? "Sign In & Send Code" : "Create Account & Send Code"}</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </form>
             </div>
           )}
 
-          {/* ── OTP ── */}
+          {/* ── 6-DIGIT EMAIL OTP ── */}
           {screen === "otp" && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-2xl font-bold text-[#F5F5F5]">Enter the code</h2>
-                <p className="text-sm text-[#B5BAC0] mt-1">
-                  Sent to <span className="text-white font-medium">+251 {phone}</span>
+                <h2 className="text-2xl font-bold text-[#F5F5F5]">Check your email</h2>
+                <p className="text-sm text-[#B5BAC0] mt-1 leading-relaxed">
+                  We sent a 6-digit code to <strong className="text-white">{email}</strong>.
+                  Enter it below to confirm your identity.
                 </p>
               </div>
 
-              {/* Demo hint box */}
-              <div className="bg-blue-950/50 border border-blue-800/40 rounded-xl px-4 py-2.5 text-xs text-blue-300 flex items-center gap-2">
-                <span className="shrink-0">🔬</span>
-                <span>
-                  Demo mode — your code is:{" "}
-                  <strong className="text-white font-mono text-sm">{otpCode}</strong>
-                </span>
+              {/* Security Hint */}
+              <div className="bg-blue-950/40 border border-blue-800/40 rounded-xl px-3.5 py-2.5 text-xs text-blue-300 flex items-center gap-2">
+                <span className="shrink-0 text-base">📩</span>
+                <span>Code sent via SMTP. Check your Inbox or Spam folder.</span>
               </div>
 
               {/* 6-box OTP */}
-              <div className="flex justify-between gap-2">
+              <div className="flex justify-between gap-1.5 sm:gap-2">
                 {otp.map((digit, idx) => (
                   <input
                     key={idx}
@@ -372,9 +709,9 @@ export default function AuthModal({
                     value={digit}
                     onChange={(e) => handleOtpChange(idx, e.target.value)}
                     onKeyDown={(e) => handleOtpKey(idx, e)}
-                    className={`w-12 h-14 text-center text-2xl font-bold bg-[#15171A] border rounded-xl outline-none transition text-[#F5F5F5] ${
+                    className={`w-11 sm:w-12 h-14 text-center text-2xl font-bold bg-[#15171A] border rounded-xl outline-none transition text-[#F5F5F5] font-mono ${
                       otpError
-                        ? "border-red-500"
+                        ? "border-red-500 shadow-sm shadow-red-500/20"
                         : "border-[#3A3F45] focus:border-[#D93A10]"
                     }`}
                   />
@@ -382,26 +719,42 @@ export default function AuthModal({
               </div>
 
               {otpError && (
-                <p className="text-red-400 text-xs">{otpError}</p>
+                <div className="bg-red-950/40 border border-red-800/50 rounded-xl px-3.5 py-2.5 text-xs text-red-300">
+                  {otpError}
+                </div>
               )}
 
               <button
-                onClick={verifyOtp}
-                disabled={otp.join("").length < 4}
-                className="w-full btn-pill-primary py-3.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleVerifyOtp}
+                disabled={loading || otp.join("").length !== 6}
+                className="w-full btn-pill-primary py-3.5 text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-[#D93A10]/20"
               >
-                {isReturning ? "Sign in →" : "Verify & Continue →"}
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying Code...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Verify Code &amp; Continue →</span>
+                  </>
+                )}
               </button>
 
-              <p className="text-center text-xs text-[#B5BAC0]">
+              <div className="text-center text-xs text-[#B5BAC0]">
                 {resendCd > 0 ? (
-                  <span>Resend in {resendCd}s</span>
+                  <span className="text-[#B5BAC0]/80">Resend code in {resendCd}s</span>
                 ) : (
-                  <button onClick={sendOtp} className="text-[#FF6A3D] hover:underline">
-                    Resend code
+                  <button
+                    onClick={handleResendCode}
+                    disabled={loading}
+                    className="text-[#FF6A3D] hover:underline font-semibold inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Resend verification code</span>
                   </button>
                 )}
-              </p>
+              </div>
             </div>
           )}
 
@@ -429,7 +782,7 @@ export default function AuthModal({
                   </strong>{" "}
                   application within{" "}
                   <strong className="text-[#F5F5F5]">1–2 business days</strong>.
-                  You&apos;ll receive an SMS once approved.
+                  You will receive an email update once approved.
                 </p>
               </div>
               <div className="bg-[#15171A] border border-[#3A3F45] rounded-2xl p-4 text-left space-y-2">
@@ -438,9 +791,9 @@ export default function AuthModal({
                 </div>
                 {[
                   "Admin reviews your documents and photos",
-                  "You receive an SMS when approved",
+                  "You receive an email notification when approved",
                   role === "shop"
-                    ? "Your shop goes live and starts receiving part requests"
+                    ? "Your shop goes live and starts receiving part RFQs"
                     : "You can start accepting delivery assignments",
                 ].map((item) => (
                   <div key={item} className="flex items-start gap-2 text-xs text-[#B5BAC0]">
@@ -468,45 +821,37 @@ export default function AuthModal({
                 </div>
               </div>
 
-              <div className="bg-purple-950/40 border border-purple-800/40 rounded-xl px-4 py-2.5 text-xs text-purple-300 flex items-center gap-2">
-                <span className="shrink-0 text-base">🔑</span>
-                <span>
-                  Demo Master Access: clearance PIN is <strong className="text-white font-mono text-sm">0000</strong>
-                </span>
-              </div>
-
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
-                    Staff Email or ID
+                    Staff Email
                   </label>
                   <input
-                    type="text"
+                    type="email"
                     value={adminUsername}
                     onChange={(e) => setAdminUsername(e.target.value)}
-                    placeholder="admin@terasync.et"
+                    placeholder="Enter staff email"
                     className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-sm text-[#F5F5F5] focus:border-purple-500 outline-none transition font-mono"
                   />
                 </div>
 
                 <div>
                   <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
-                    4-Digit Security Master PIN
+                    Admin Password
                   </label>
                   <input
                     type="password"
-                    maxLength={6}
-                    value={adminPin}
+                    value={adminPassword}
                     onChange={(e) => {
-                      setAdminPin(e.target.value);
+                      setAdminPassword(e.target.value);
                       setAdminError("");
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleAdminLogin();
                     }}
-                    placeholder="••••"
+                    placeholder="••••••••"
                     autoFocus
-                    className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-center text-[#F5F5F5] tracking-widest font-mono text-2xl focus:border-purple-500 outline-none transition"
+                    className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-[#F5F5F5] font-mono text-sm focus:border-purple-500 outline-none transition"
                   />
                 </div>
 
@@ -516,11 +861,20 @@ export default function AuthModal({
 
                 <button
                   onClick={handleAdminLogin}
-                  disabled={adminPin.trim().length === 0}
+                  disabled={loading || adminPassword.trim().length === 0}
                   className="w-full py-3.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm transition shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <span>Authorize &amp; Open Admin Console</span>
-                  <ArrowRight className="w-4 h-4" />
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Authenticating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Sign In &amp; Send Verification Code</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </div>
             </div>

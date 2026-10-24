@@ -11,6 +11,7 @@ import {
   ArrowRight,
   LogOut,
   ChevronLeft,
+  Loader2,
 } from "lucide-react";
 
 interface PendingApp {
@@ -40,8 +41,12 @@ interface PendingApp {
 
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState("admin@terasync.et");
-  const [adminPin, setAdminPin] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [step, setStep] = useState<"login" | "otp">("login");
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"applications" | "disputes">("applications");
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -100,14 +105,95 @@ export default function AdminPage() {
     },
   ]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPin === "0000" || adminPin === "admin") {
+    setError("");
+    const cleanEmail = adminEmail.trim().toLowerCase();
+    const pass = adminPassword.trim();
+
+    if (!cleanEmail || !pass) {
+      setError("Please enter your staff email and password");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch("http://localhost:4000/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: cleanEmail, password: pass }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error?.message || data?.message || "Invalid email or password");
+      }
+
+      if (data.requires2FA) {
+        setChallengeId(data.challengeId);
+        setStep("otp");
+      } else {
+        setIsAuthenticated(true);
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to authenticate");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const code = otp.join("");
+    if (code.length !== 6) {
+      setError("Please enter the complete 6-digit code");
+      return;
+    }
+
+    if (!challengeId) {
+      setError("Session expired. Please log in again.");
+      setStep("login");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch("http://localhost:4000/auth/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          challengeId,
+          code,
+          rememberDevice: false,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error?.message || data?.message || "Invalid verification code");
+      }
+
+      if (typeof window !== "undefined" && data.accessToken) {
+        localStorage.setItem("terasync_access_token", data.accessToken);
+        localStorage.setItem("terasync_refresh_token", data.refreshToken);
+      }
+
       setIsAuthenticated(true);
       setError("");
-    } else {
-      setError("Invalid Security PIN. Use demo clearance PIN: 0000");
+    } catch (err: any) {
+      setError(err.message || "Verification failed");
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleOtpChange = (idx: number, val: string) => {
+    if (!/^\d?$/.test(val)) return;
+    const next = [...otp];
+    next[idx] = val;
+    setOtp(next);
+    setError("");
   };
 
   const handleApprove = (id: string) => {
@@ -147,58 +233,118 @@ export default function AdminPage() {
             </p>
           </div>
 
-          <div className="bg-purple-950/40 border border-purple-800/40 rounded-2xl p-4 text-xs text-purple-300 flex items-center gap-2.5">
-            <span className="text-lg">🔑</span>
-            <div>
-              <span className="font-semibold block text-white">Demo Administrator Clearance:</span>
-              <span>Use Master Security PIN: <strong className="font-mono text-purple-200">0000</strong></span>
-            </div>
-          </div>
-
-          <form
-            onSubmit={handleLogin}
-            className="p-6 rounded-3xl bg-[#0F1012] border border-[#3A3F45] shadow-2xl space-y-4"
-          >
-            <div>
-              <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
-                Staff Email / ID
-              </label>
-              <input
-                type="text"
-                value={adminEmail}
-                onChange={(e) => setAdminEmail(e.target.value)}
-                className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-sm text-[#F5F5F5] focus:border-purple-500 outline-none transition font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
-                4-Digit Security Master PIN
-              </label>
-              <input
-                type="password"
-                maxLength={6}
-                value={adminPin}
-                onChange={(e) => {
-                  setAdminPin(e.target.value);
-                  setError("");
-                }}
-                placeholder="••••"
-                autoFocus
-                className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-center text-[#F5F5F5] tracking-widest font-mono text-2xl focus:border-purple-500 outline-none transition"
-              />
-            </div>
-
-            {error && <p className="text-xs text-red-400 font-medium">{error}</p>}
-
-            <button
-              type="submit"
-              className="w-full py-3.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm transition shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2"
+          {step === "login" ? (
+            <form
+              onSubmit={handleLogin}
+              className="p-6 rounded-3xl bg-[#0F1012] border border-[#3A3F45] shadow-2xl space-y-4"
             >
-              <span>Authenticate &amp; Open Admin Console</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </form>
+              <div>
+                <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
+                  Staff Email
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  placeholder="Enter staff email"
+                  className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-sm text-[#F5F5F5] focus:border-purple-500 outline-none transition font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-[#B5BAC0] uppercase tracking-wider block mb-1.5">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={adminPassword}
+                  onChange={(e) => {
+                    setAdminPassword(e.target.value);
+                    setError("");
+                  }}
+                  placeholder="••••••••"
+                  autoFocus
+                  className="w-full bg-[#15171A] border border-[#3A3F45] rounded-xl px-4 py-3 text-[#F5F5F5] font-mono text-sm focus:border-purple-500 outline-none transition"
+                />
+              </div>
+
+              {error && <p className="text-xs text-red-400 font-medium">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm transition shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Sending Code...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Authenticate &amp; Send Verification Code</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          ) : (
+            <form
+              onSubmit={handleVerifyOtp}
+              className="p-6 rounded-3xl bg-[#0F1012] border border-[#3A3F45] shadow-2xl space-y-5"
+            >
+              <div className="text-center space-y-1">
+                <h2 className="text-lg font-bold text-white">Enter 6-Digit Email Code</h2>
+                <p className="text-xs text-[#B5BAC0]">
+                  Code sent to <strong className="text-white">{adminEmail}</strong>. Check your inbox.
+                </p>
+              </div>
+
+              <div className="flex justify-between gap-2">
+                {otp.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpChange(idx, e.target.value)}
+                    className="w-12 h-14 text-center text-2xl font-bold bg-[#15171A] border border-[#3A3F45] focus:border-purple-500 rounded-xl outline-none transition text-[#F5F5F5] font-mono"
+                  />
+                ))}
+              </div>
+
+              {error && <p className="text-xs text-red-400 font-medium text-center">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={loading || otp.join("").length !== 6}
+                className="w-full py-3.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm transition shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Verify Code &amp; Open Admin Console</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStep("login")}
+                className="w-full text-center text-xs text-[#B5BAC0] hover:text-white"
+              >
+                ← Back to Login
+              </button>
+            </form>
+          )}
         </div>
       </div>
     );

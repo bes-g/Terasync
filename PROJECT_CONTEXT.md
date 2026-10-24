@@ -120,9 +120,10 @@ PENDING -> ACCEPTED | REJECTED | EXPIRED | WITHDRAWN (vendor withdraws before ac
 
 ## 9. Data model (high level; the real Prisma schema comes in Commit 3)
 
-- **User**: id (UUID), phoneNumber (E.164, unique), fullName, role, faydaId (optional, phase 2), languagePreference, isVerified, timestamps
-- **OtpCode**: phone, codeHash, expiresAt, attempts, consumedAt
-- **RefreshToken**: userId, tokenHash, expiresAt, revokedAt
+- **User**: id (UUID), email (unique, lowercase), passwordHash, emailVerifiedAt, failedLoginCount, lockedUntil, phoneNumber (optional E.164, profile field), fullName, role (BUYER, VENDOR, COURIER, ADMIN), status (ACTIVE, PENDING_APPROVAL, SUSPENDED), faydaId (optional, phase 2), languagePreference, timestamps
+- **AuthCode**: id (UUID), email, purpose (VERIFY_EMAIL, LOGIN, RESET_PASSWORD), codeHash, expiresAt, attempts, consumedAt, ip
+- **TrustedDevice**: id (UUID), userId, tokenHash, expiresAt, timestamps
+- **RefreshToken**: id (UUID), userId, tokenHash, expiresAt, revokedAt, replacedByTokenId, timestamps
 - **VendorProfile**: userId, shopName, marketArea, tinNumber, categories[], supportedBrands[], supportedModels[], partCategoryIds[], rating, totalSalesCount, isVerifiedMerchant, plus scorecard fields (avgResponseSeconds, disputeCount, counterfeitReportCount)
 - **CourierProfile**: userId, vehicleType, licensePlate, isActive, currentLocationLat/Lng
 - **PartRequest**: buyerId, vehicleVariantId?, catalogPartId?, categoryId?, isCustomRequest (default false), title, category, make, model, year, engineModel, vinOrChassisNumber, plateNumber, partNumber (optional), description, images[], urgency, marketLocationPreference, status, expiresAt, timestamps
@@ -176,8 +177,8 @@ terasync/
 The frontend talks to the backend only through the HTTP API (and Socket.io). It never imports backend code.
 
 Key choices:
-- Storefront: Customers land on the public storefront (`/`) without logging in, select their vehicle, browse categories, and search parts. Authentication (phone + OTP) is prompted only when requesting offers or accessing authenticated buyer/vendor/courier/admin portals.
-- Auth: phone number + OTP (SMS provider behind an interface, console mock in dev), JWT access + refresh tokens, role-based access control.
+- Storefront: Customers land on the public storefront (`/`) without logging in, select their vehicle, browse categories, and search parts. Authentication (email + password + 6-digit email verification code) is prompted only when requesting offers or accessing authenticated buyer/vendor/courier/admin portals.
+- Auth: Email + password + 6-digit email verification code (EmailProvider interface with SMTP provider in production and console mock in dev/test), JWT access + rotating refresh tokens with reuse detection, role-based access control (BUYER, VENDOR, COURIER, ADMIN). Phone number is an optional profile field (collected during onboarding for courier delivery contact and the 4-digit physical inspection escrow PIN), not the primary login identity. Optional 30-day trusted device token bypasses login code on recognized devices.
 - Payments: `PaymentProvider` interface with a Chapa implementation. Always verify a payment by calling the gateway's verify endpoint, not by trusting the webhook alone. Check amount and currency. Idempotency via WebhookEvent plus unique paymentReference.
 - Payouts: a `PayoutProvider` interface. MVP mode is MANUAL (admin sends the money and marks the payout SENT). Automatic payouts come later.
 - Escrow: legal custody model is still to be confirmed with a lawyer and a licensed payment partner (National Bank of Ethiopia rules). The code treats escrow as an internal state machine, so the funding model can change without rewriting logic.
