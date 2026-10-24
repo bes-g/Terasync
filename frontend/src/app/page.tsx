@@ -31,11 +31,28 @@ import {
   SlidersHorizontal,
   PackageCheck,
   Share2,
+  User,
 } from "lucide-react";
 
 import { AUTOMOTIVE_SYSTEMS, AutomotiveSystem, SinglePartItem } from "../data/systems";
+import AuthModal, { AuthRole, AuthProfile } from "./AuthModal";
 
 type Role = "landing" | "market" | "buyer" | "vendor" | "courier" | "admin";
+
+interface NavItem {
+  label: string;
+  role: Role;
+  rolesAllowed?: AuthRole[]; // empty/undefined = public
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Storefront", role: "landing" },
+  { label: "Catalog", role: "market" },
+  { label: "Garage", role: "buyer", rolesAllowed: ["customer", "admin"] },
+  { label: "Vendor", role: "vendor", rolesAllowed: ["shop", "admin"] },
+  { label: "Courier", role: "courier", rolesAllowed: ["rider", "admin"] },
+  { label: "Admin", role: "admin", rolesAllowed: ["admin"] },
+];
 
 interface PartRequest {
   id: string;
@@ -147,8 +164,96 @@ const VEHICLE_GARAGE_OPTIONS = [
   { id: "ISUZU_NPR", label: "Isuzu NPR / Forward (4HF1/4HG1 24V Truck)" },
 ];
 
+const TOP_SELLER_PART_IDS = [
+  "RAD-HIACE-COPPER",
+  "EMS-INJECTOR",
+  "BRK-ROTOR-VENTED",
+  "BYD-PORT-GBT",
+  "EMS-COIL",
+  "TOY-CLUTCH-KIT",
+  "BRK-PADS",
+  "EMS-PUMP",
+];
+
+const TOP_SELLERS_LIST: SinglePartItem[] = TOP_SELLER_PART_IDS.map((id) => {
+  for (const sys of AUTOMOTIVE_SYSTEMS) {
+    const found = sys.singleParts.find((p) => p.id === id);
+    if (found) return found;
+  }
+  return AUTOMOTIVE_SYSTEMS[0].singleParts[0];
+});
+
+function ProtectedPortalGuard({
+  allowedRoles,
+  currentUser,
+  portalName,
+  requiredRole,
+  onLoginPrompt,
+  onReturnHome,
+  children,
+}: {
+  allowedRoles: AuthRole[];
+  currentUser: AuthProfile | null;
+  portalName: string;
+  requiredRole: AuthRole;
+  onLoginPrompt: (role: AuthRole) => void;
+  onReturnHome: () => void;
+  children: React.ReactNode;
+}) {
+  const isAuthorized =
+    currentUser && (allowedRoles.includes(currentUser.role) || currentUser.role === "admin");
+
+  if (!isAuthorized) {
+    return (
+      <div className="p-8 sm:p-12 rounded-3xl bg-[#0F1012] border border-[#3A3F45] max-w-xl mx-auto my-12 text-center space-y-6 shadow-2xl">
+        <div className="w-16 h-16 rounded-2xl bg-red-950/40 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto text-3xl font-bold">
+          <Lock className="w-8 h-8 text-[#FF6A3D]" />
+        </div>
+        <div className="space-y-2">
+          <div className="inline-block px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono font-semibold uppercase tracking-wider">
+            Protected Portal &bull; Unauthorized
+          </div>
+          <h2 className="text-2xl font-bold text-[#F5F5F5]">
+            {portalName} Access Restricted
+          </h2>
+          <p className="text-sm text-[#B5BAC0] leading-relaxed max-w-md mx-auto">
+            {currentUser
+              ? `Your current account (${currentUser.role}) does not have clearance to access the ${portalName}. Please switch accounts or log in with an authorized role.`
+              : `You must be logged in with a verified ${portalName} account to view this dashboard and manage orders.`}
+          </p>
+        </div>
+
+        <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={() => onLoginPrompt(requiredRole)}
+            className="w-full sm:w-auto btn-pill-primary px-6 py-2.5 text-xs font-bold flex items-center justify-center gap-2"
+          >
+            <span>Log In to {portalName}</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onReturnHome}
+            className="w-full sm:w-auto btn-pill-ghost px-6 py-2.5 text-xs font-medium text-[#B5BAC0]"
+          >
+            Return to Storefront
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 export default function TeraSyncPlatform() {
   const [currentRole, setCurrentRole] = useState<Role>("landing");
+
+  // Top sellers carousel index & mobile navigation drawer
+  const [topSellerIdx, setTopSellerIdx] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [finderBrand, setFinderBrand] = useState("TOYOTA");
+  const [finderModel, setFinderModel] = useState("HIACE");
+  const [finderEngine, setFinderEngine] = useState("DIESEL");
 
   // Market View Mode: Exploded System View vs Grid View
   const [marketViewMode, setMarketViewMode] = useState<"systems" | "grid">("systems");
@@ -177,6 +282,145 @@ export default function TeraSyncPlatform() {
   const [pinRevealed, setPinRevealed] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [pinVerified, setPinVerified] = useState(false);
+
+  // Auth & Onboarding state
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authTargetRole, setAuthTargetRole] = useState<AuthRole | null>(null);
+  const [partnerDropdownOpen, setPartnerDropdownOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AuthProfile | null>(null);
+
+  const openAuth = (role: AuthRole | null = null) => {
+    setAuthTargetRole(role);
+    setAuthModalOpen(true);
+    setPartnerDropdownOpen(false);
+  };
+
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (!item.rolesAllowed) return true; // public
+    return currentUser && item.rolesAllowed.includes(currentUser.role);
+  });
+  const [knownPhones, setKnownPhones] = useState<Set<string>>(
+    () => new Set(["0911223344", "0922334455", "0911554433", "0922776655"])
+  );
+  const [adminSubTab, setAdminSubTab] = useState<"applications" | "disputes">("applications");
+  const [pendingApplications, setPendingApplications] = useState<
+    Array<{
+      id: string;
+      role: "shop" | "rider";
+      phone: string;
+      submittedAt: string;
+      status: "PENDING" | "APPROVED" | "REJECTED";
+      profile: AuthProfile;
+    }>
+  >([
+    {
+      id: "APP-101",
+      role: "shop",
+      phone: "0911554433",
+      submittedAt: "10m ago",
+      status: "PENDING",
+      profile: {
+        role: "shop",
+        phone: "0911554433",
+        shopName: "Bole Genuine Starters & Alternators",
+        ownerName: "Tewodros Kassahun",
+        market: "Teklehaymanot",
+        street: "Shop #18, Electrical Row",
+        brands: ["Toyota (OEM & Aftermarket)", "BYD Electric"],
+        tin: "0038472910",
+        licenseNum: "AA/LIC/2024/9912",
+        bank: "Commercial Bank of Ethiopia (CBE)",
+        accountNumber: "100019283746",
+      },
+    },
+    {
+      id: "APP-102",
+      role: "rider",
+      phone: "0922776655",
+      submittedAt: "35m ago",
+      status: "PENDING",
+      profile: {
+        role: "rider",
+        phone: "0922776655",
+        vehicleType: "Motorcycle (100–150cc)",
+        plate: "AA-49201",
+        areas: ["Bole", "Yeka", "Kirkos"],
+        idNumber: "FAN/AA/8849201",
+        payoutService: "Telebirr (Ethio Telecom)",
+        payoutNumber: "0922776655",
+      },
+    },
+  ]);
+
+  const handlePhoneUsed = (phone: string) => {
+    setKnownPhones((prev) => new Set([...Array.from(prev), phone]));
+  };
+
+  const handleAuthComplete = (role: AuthRole, profile: AuthProfile) => {
+    setCurrentUser(profile);
+    if (role === "customer") {
+      if (profile.make) {
+        const makeStr = String(profile.make);
+        if (makeStr.includes("Toyota")) setFinderBrand("TOYOTA");
+        else if (makeStr.includes("BYD")) setFinderBrand("BYD");
+        else if (makeStr.includes("Hyundai")) setFinderBrand("HYUNDAI");
+        else if (makeStr.includes("Suzuki")) setFinderBrand("SUZUKI");
+        else if (makeStr.includes("Isuzu")) setFinderBrand("ISUZU");
+      }
+      if (profile.model) {
+        const modStr = String(profile.model);
+        if (modStr.includes("HiAce")) setFinderModel("HIACE");
+        else if (modStr.includes("Hilux")) setFinderModel("HILUX");
+        else if (modStr.includes("Atto 3")) setFinderModel("ATTO3");
+        else if (modStr.includes("Dzire")) setFinderModel("DZIRE");
+      }
+      setCurrentRole("landing");
+      setRfqSuccessToast(`Welcome, ${String(profile.firstName || "Customer")}! Your vehicle is selected on the storefront.`);
+      setTimeout(() => setRfqSuccessToast(null), 8000);
+    } else if (role === "shop") {
+      setCurrentRole("vendor");
+      setRfqSuccessToast(`Logged in to Merchant Console (${String(profile.shopName || "Alpha Auto Spares")})`);
+      setTimeout(() => setRfqSuccessToast(null), 8000);
+    } else if (role === "rider") {
+      setCurrentRole("courier");
+      setRfqSuccessToast(`Logged in to Delivery Dispatch (${String(profile.plate || "Motorcycle")})`);
+      setTimeout(() => setRfqSuccessToast(null), 8000);
+    } else if (role === "admin") {
+      setCurrentRole("admin");
+      setRfqSuccessToast("Authenticated as Central Operations Administrator.");
+      setTimeout(() => setRfqSuccessToast(null), 8000);
+    }
+  };
+
+  const handlePendingReview = (role: AuthRole, profile: AuthProfile) => {
+    const newApp = {
+      id: `APP-${Math.floor(100 + Math.random() * 900)}`,
+      role: role as "shop" | "rider",
+      phone: profile.phone,
+      submittedAt: "Just now",
+      status: "PENDING" as const,
+      profile,
+    };
+    setPendingApplications((prev) => [newApp, ...prev]);
+  };
+
+  const handleApproveApp = (appId: string) => {
+    setPendingApplications((prev) =>
+      prev.map((app) => (app.id === appId ? { ...app, status: "APPROVED" as const } : app))
+    );
+    const target = pendingApplications.find((a) => a.id === appId);
+    if (target) {
+      setKnownPhones((prev) => new Set([...Array.from(prev), target.phone]));
+      setRfqSuccessToast(`Application ${appId} Approved! Merchant/Rider is now active and approved.`);
+      setTimeout(() => setRfqSuccessToast(null), 8000);
+    }
+  };
+
+  const handleRejectApp = (appId: string) => {
+    setPendingApplications((prev) =>
+      prev.map((app) => (app.id === appId ? { ...app, status: "REJECTED" as const } : app))
+    );
+  };
 
   // Active RFQs
   const [rfqList, setRfqList] = useState<PartRequest[]>([
@@ -389,138 +633,401 @@ export default function TeraSyncPlatform() {
   };
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
-      {/* Top System Navigation Bar */}
-      <header className="border-b border-slate-800/80 bg-[#0c1222]/90 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-[#050506] text-[#F5F5F5] flex flex-col font-sans selection:bg-[#D93A10] selection:text-white pb-16 sm:pb-0">
+      {/* 1. Thin Top Bar (13px, light weight) */}
+      <div className="bg-[#050506] border-b border-[#3A3F45] text-[13px] font-light text-[#B5BAC0]">
+        <div className="max-w-[1216px] mx-auto px-4 sm:px-8 h-10 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 overflow-hidden truncate">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#D93A10] shrink-0 animate-pulse"></span>
+            <span className="truncate">Addis Ababa Reverse-RFQ &amp; Sealed Escrow Clearinghouse for Automotive Parts</span>
+          </div>
+
+          <div className="flex items-center gap-4 shrink-0 text-xs">
+            <div className="relative hidden md:block">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#B5BAC0]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (currentRole !== "market") setCurrentRole("market");
+                }}
+                placeholder="Search part, SKU, OEM..."
+                className="bg-[#0F1012] border border-[#3A3F45] rounded-full pl-8 pr-3 py-1 text-xs text-[#F5F5F5] placeholder-[#B5BAC0]/50 focus:border-[#FF6A3D] w-48 transition"
+              />
+            </div>
+
+            {currentUser ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (currentUser.role === "customer") setCurrentRole("buyer");
+                    else if (currentUser.role === "shop") setCurrentRole("vendor");
+                    else if (currentUser.role === "rider") setCurrentRole("courier");
+                    else if (currentUser.role === "admin") setCurrentRole("admin");
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-[#15171A] border border-[#3A3F45] text-xs font-medium text-[#F5F5F5] hover:border-[#FF6A3D] flex items-center gap-1.5 transition"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${currentUser.role === "admin" ? "bg-purple-400" : "bg-emerald-500"}`}></span>
+                  <span className="capitalize">{currentUser.role === "admin" ? "Central Admin" : currentUser.role}</span>
+                  {currentUser.firstName ? ` (${String(currentUser.firstName)})` : currentUser.shopName ? ` (${String(currentUser.shopName)})` : ""}
+                </button>
+                <button
+                  onClick={() => {
+                    setCurrentUser(null);
+                    setCurrentRole("landing");
+                    setRfqSuccessToast("Signed out successfully.");
+                    setTimeout(() => setRfqSuccessToast(null), 5000);
+                  }}
+                  className="hover:text-red-400 text-xs text-[#B5BAC0] transition px-1"
+                  title="Sign out"
+                >
+                  Sign out
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                {/* Partner Portal Dropdown */}
+                <div className="relative">
+                  <button
+                    onClick={() => setPartnerDropdownOpen(!partnerDropdownOpen)}
+                    className="hover:text-[#F5F5F5] transition hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#15171A] border border-[#3A3F45] text-xs font-medium text-[#B5BAC0] hover:border-[#FF6A3D]"
+                  >
+                    <Store className="w-3.5 h-3.5 text-[#FF6A3D]" />
+                    <span>Partner Portal</span>
+                    <ChevronDown className="w-3 h-3 text-[#B5BAC0]" />
+                  </button>
+
+                  {partnerDropdownOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setPartnerDropdownOpen(false)}
+                      />
+                      <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-[#0F1012] border border-[#3A3F45] p-2 shadow-2xl z-50 space-y-1 text-xs">
+                        <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-[#8A8F96] tracking-wider border-b border-[#3A3F45]/60">
+                          Partner Logins
+                        </div>
+                        <button
+                          onClick={() => openAuth("customer")}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#1E2024] text-[#F5F5F5] flex items-center gap-2.5 transition"
+                        >
+                          <Wrench className="w-4 h-4 text-orange-400 shrink-0" />
+                          <div>
+                            <div className="font-semibold text-white">Garage / Workshop</div>
+                            <div className="text-[10px] text-[#B5BAC0]">Diagnostics &amp; RFQs</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => openAuth("shop")}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#1E2024] text-[#F5F5F5] flex items-center gap-2.5 transition"
+                        >
+                          <Store className="w-4 h-4 text-blue-400 shrink-0" />
+                          <div>
+                            <div className="font-semibold text-white">Parts Merchant</div>
+                            <div className="text-[10px] text-[#B5BAC0]">Inventory &amp; Bids</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => openAuth("rider")}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#1E2024] text-[#F5F5F5] flex items-center gap-2.5 transition"
+                        >
+                          <Bike className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <div>
+                            <div className="font-semibold text-white">Delivery Courier</div>
+                            <div className="text-[10px] text-[#B5BAC0]">Express Dispatch</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => openAuth("admin")}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#1E2024] text-[#F5F5F5] flex items-center gap-2.5 transition border-t border-[#3A3F45]/40"
+                        >
+                          <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
+                          <div>
+                            <div className="font-semibold text-purple-300">Operations Desk</div>
+                            <div className="text-[10px] text-[#B5BAC0]">Staff Clearance</div>
+                          </div>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => openAuth(null)}
+                  className="hover:text-[#F5F5F5] transition hidden sm:inline-flex items-center gap-1 font-semibold text-xs text-[#FF6A3D]"
+                >
+                  Log In / Register
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                if (!currentUser) {
+                  openAuth("customer");
+                } else {
+                  setCurrentRole("buyer");
+                }
+              }}
+              className="flex items-center gap-1.5 hover:text-[#FF6A3D] transition font-medium"
+            >
+              <span>My requests</span>
+              <span className="px-1.5 py-0.2 rounded-full bg-[#D93A10] text-white text-[11px] font-bold">
+                {rfqList.length}
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Header (Logo on left, links at 14px weight 500 on right, mobile collapse) */}
+      <header className="border-b border-[#3A3F45] bg-[#050506]/95 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-[1216px] mx-auto px-4 sm:px-8 h-18 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setCurrentRole("landing")}
-              className="flex items-center gap-2 group text-left"
+              className="flex items-center gap-2.5 text-left group"
             >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-blue-600 to-emerald-400 p-0.5 shadow-lg shadow-blue-500/20">
-                <div className="w-full h-full bg-[#090e1a] rounded-[10px] flex items-center justify-center font-black text-white text-lg">
-                  ⚡
-                </div>
+              <div className="w-9 h-9 rounded-full bg-[#D93A10] flex items-center justify-center font-black text-white text-base shadow-sm group-hover:bg-[#F04A1C] transition">
+                ⚡
               </div>
-              <div>
-                <span className="font-extrabold text-lg text-white tracking-tight group-hover:text-blue-400 transition">
+              <div className="flex flex-col">
+                <span className="font-bold text-xl text-[#F5F5F5] tracking-tight group-hover:text-[#FF6A3D] transition">
                   TeraSync
                 </span>
-                <span className="hidden sm:inline-block ml-2 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-800/60">
-                  Parts &amp; Systems Hub
+                <span className="text-[10px] text-[#B5BAC0] tracking-wider uppercase -mt-0.5 font-light">
+                  Automotive Catalog
                 </span>
               </div>
             </button>
           </div>
 
-          {/* Classified Roles Navigation Pill */}
-          <div className="flex items-center gap-2">
-            <div className="bg-slate-900/90 p-1 rounded-xl border border-slate-800/90 flex items-center shadow-inner overflow-x-auto max-w-[80vw] sm:max-w-none">
-              <button
-                onClick={() => setCurrentRole("landing")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
-                  currentRole === "landing"
-                    ? "bg-slate-800 text-white shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <span>Overview</span>
-              </button>
+          {/* Desktop Nav Links (14px, weight 500) */}
+          <nav className="hidden lg:flex items-center gap-7 text-[14px] font-medium text-[#F5F5F5]">
+            <button
+              onClick={() => {
+                setMarketViewMode("systems");
+                setCurrentRole("market");
+              }}
+              className="hover:text-[#FF6A3D] transition"
+            >
+              Shop Parts
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById("vehicle-finder-bar");
+                if (el) el.scrollIntoView({ behavior: "smooth" });
+                else setCurrentRole("market");
+              }}
+              className="hover:text-[#FF6A3D] transition"
+            >
+              Brands
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById("showcase-section");
+                if (el) el.scrollIntoView({ behavior: "smooth" });
+              }}
+              className="hover:text-[#FF6A3D] transition"
+            >
+              How it works
+            </button>
 
-              {/* Systems & Electrical Feed */}
+            {!currentUser ? (
               <button
-                onClick={() => setCurrentRole("market")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shrink-0 ${
-                  currentRole === "market"
-                    ? "bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md shadow-orange-500/20"
-                    : "text-amber-400 hover:text-amber-200"
-                }`}
+                onClick={() => setPartnerDropdownOpen(!partnerDropdownOpen)}
+                className="hover:text-[#FF6A3D] text-[#B5BAC0] transition flex items-center gap-1"
               >
-                <Zap className="w-3.5 h-3.5 fill-current" />
-                <span>Systems &amp; Feed</span>
+                <span>Partner Portal</span>
+                <ChevronDown className="w-3.5 h-3.5" />
               </button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (currentUser.role === "customer") setCurrentRole("buyer");
+                  else if (currentUser.role === "shop") setCurrentRole("vendor");
+                  else if (currentUser.role === "rider") setCurrentRole("courier");
+                  else if (currentUser.role === "admin") setCurrentRole("admin");
+                }}
+                className="hover:text-[#FF6A3D] text-[#FF6A3D] font-bold transition flex items-center gap-1"
+              >
+                <span>
+                  {currentUser.role === "customer"
+                    ? "Garage Workbench"
+                    : currentUser.role === "shop"
+                    ? "Merchant Console"
+                    : currentUser.role === "rider"
+                    ? "Courier Dispatch"
+                    : "Central Admin Desk"}
+                </span>
+                &rarr;
+              </button>
+            )}
+          </nav>
 
-              <button
-                onClick={() => setCurrentRole("buyer")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
-                  currentRole === "buyer"
-                    ? "bg-blue-600 text-white shadow-sm shadow-blue-600/30"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Wrench className="w-3.5 h-3.5 text-blue-400" />
-                <span className="hidden md:inline">Garage /</span> Buyer
-              </button>
-
-              <button
-                onClick={() => setCurrentRole("vendor")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
-                  currentRole === "vendor"
-                    ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/30"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Store className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden md:inline">Shop /</span> Vendor
-              </button>
-
-              <button
-                onClick={() => setCurrentRole("courier")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
-                  currentRole === "courier"
-                    ? "bg-amber-600 text-white shadow-sm shadow-amber-600/30"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Bike className="w-3.5 h-3.5 text-amber-400" />
-                Courier
-              </button>
-
-              <button
-                onClick={() => setCurrentRole("admin")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
-                  currentRole === "admin"
-                    ? "bg-purple-600 text-white shadow-sm shadow-purple-600/30"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
-                Admin
-              </button>
+          {/* Quick Role Switcher Pill + Mobile Menu Toggle */}
+          <div className="flex items-center gap-3">
+            <div className="bg-[#0F1012] p-1 rounded-full border border-[#3A3F45] flex items-center gap-1">
+              {visibleNavItems.map((item) => (
+                <button
+                  key={item.role}
+                  onClick={() => setCurrentRole(item.role)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                    currentRole === item.role
+                      ? "bg-[#D93A10] text-white shadow-sm"
+                      : "text-[#B5BAC0] hover:text-[#F5F5F5]"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
-            <div className="h-4 w-px bg-slate-800 mx-1 hidden sm:block"></div>
-
-            <a
-              href="http://localhost:4000/health"
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-emerald-950/60 text-emerald-400 border border-emerald-800/50 hidden lg:flex items-center gap-1.5"
+            {/* Mobile hamburger button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="lg:hidden p-2 rounded-full border border-[#3A3F45] text-[#F5F5F5] hover:border-[#FF6A3D] min-h-[44px] min-w-[44px] flex items-center justify-center"
+              aria-label="Toggle navigation menu"
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Backend API Active
-            </a>
+              {mobileMenuOpen ? <X className="w-5 h-5" /> : <SlidersHorizontal className="w-5 h-5" />}
+            </button>
           </div>
         </div>
+
+        {/* Mobile dropdown drawer */}
+        {mobileMenuOpen && (
+          <div className="lg:hidden border-t border-[#3A3F45] bg-[#0F1012] px-6 py-4 space-y-4">
+            <div className="flex flex-col gap-1 text-sm font-medium">
+              {visibleNavItems.map((item) => (
+                <button
+                  key={item.role}
+                  onClick={() => {
+                    setCurrentRole(item.role);
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`text-left py-2 px-3 rounded-xl transition ${
+                    currentRole === item.role
+                      ? "bg-[#D93A10] text-white font-bold"
+                      : "text-[#F5F5F5] hover:text-[#FF6A3D] hover:bg-[#1E2024]"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="pt-3 border-t border-[#3A3F45]/60 space-y-2">
+              {currentUser ? (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-[#050506] border border-[#3A3F45]">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-[#D93A10]/20 text-[#FF6A3D] font-bold text-xs flex items-center justify-center border border-[#D93A10]/40">
+                      {currentUser.role[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-[#F5F5F5] leading-tight">
+                        {String(currentUser.shopName || currentUser.firstName || currentUser.plate || currentUser.role)}
+                      </div>
+                      <div className="text-[10px] text-[#B5BAC0] uppercase tracking-wider font-mono">
+                        {currentUser.role}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setCurrentUser(null);
+                      setCurrentRole("landing");
+                      setMobileMenuOpen(false);
+                      setRfqSuccessToast("Signed out successfully.");
+                      setTimeout(() => setRfqSuccessToast(null), 4000);
+                    }}
+                    className="text-xs font-semibold text-[#B5BAC0] hover:text-red-400 py-1 px-2"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => {
+                      openAuth(null);
+                      setMobileMenuOpen(false);
+                    }}
+                    className="w-full btn-pill-primary py-2.5 text-xs font-bold flex items-center justify-center gap-2"
+                  >
+                    <User className="w-4 h-4" />
+                    <span>Log In / Register</span>
+                  </button>
+                  <div className="p-3 rounded-xl bg-[#050506] border border-[#3A3F45] space-y-1.5">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-[#8A8F96] block">
+                      Partner Portals
+                    </span>
+                    <div className="grid grid-cols-2 gap-1.5 text-xs">
+                      <button
+                        onClick={() => {
+                          openAuth("customer");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="p-2 rounded-lg bg-[#0F1012] hover:bg-[#1E2024] text-left text-[#B5BAC0] hover:text-white border border-[#3A3F45]/50 flex items-center gap-1.5"
+                      >
+                        <Wrench className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Garage</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          openAuth("shop");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="p-2 rounded-lg bg-[#0F1012] hover:bg-[#1E2024] text-left text-[#B5BAC0] hover:text-white border border-[#3A3F45]/50 flex items-center gap-1.5"
+                      >
+                        <Store className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Vendor</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          openAuth("rider");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="p-2 rounded-lg bg-[#0F1012] hover:bg-[#1E2024] text-left text-[#B5BAC0] hover:text-white border border-[#3A3F45]/50 flex items-center gap-1.5"
+                      >
+                        <Bike className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Courier</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          openAuth("admin");
+                          setMobileMenuOpen(false);
+                        }}
+                        className="p-2 rounded-lg bg-[#0F1012] hover:bg-[#1E2024] text-left text-[#B5BAC0] hover:text-white border border-[#3A3F45]/50 flex items-center gap-1.5"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Admin</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Global Toast for Broadcasted RFQs */}
       {rfqSuccessToast && (
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-2.5 px-4 shadow-lg text-xs font-semibold flex items-center justify-between">
-          <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
+        <div className="bg-[#0F1012] border-b border-emerald-500/40 text-emerald-400 py-2.5 px-4 shadow-lg text-xs font-semibold flex items-center justify-between">
+          <div className="max-w-[1216px] mx-auto w-full flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>{rfqSuccessToast}</span>
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span className="text-[#F5F5F5]">{rfqSuccessToast}</span>
             </div>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setCurrentRole("buyer")}
-                className="underline hover:text-slate-100 font-bold"
+                className="text-[#FF6A3D] hover:underline font-bold"
               >
                 View in Garage Workbench &rarr;
               </button>
-              <button onClick={() => setRfqSuccessToast(null)} className="text-white/80 hover:text-white">
+              <button onClick={() => setRfqSuccessToast(null)} className="text-[#B5BAC0] hover:text-white">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -529,207 +1036,627 @@ export default function TeraSyncPlatform() {
       )}
 
       {/* Main Workspace Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-10">
+      <main className="flex-1 max-w-[1216px] w-full mx-auto px-4 sm:px-8 py-8 space-y-12">
         {/* =========================================================================
             1. LANDING / SYSTEM SHOWCASE WITH STYLED VISUAL PANELS
         ========================================================================= */}
         {currentRole === "landing" && (
-          <div className="space-y-12">
-            {/* Hero Section with Visual Backdrop Card */}
-            <div className="relative rounded-3xl overflow-hidden border border-slate-800/90 shadow-2xl bg-[#0b101d]">
-              <div className="absolute inset-0 z-0 opacity-25">
-                <img
-                  src="/images/mechanic-bench.jpg"
-                  alt="Mechanic Workbench with automotive electrical components"
-                  className="w-full h-full object-cover object-center filter grayscale contrast-125"
-                />
-                <div className="absolute inset-0 bg-gradient-to-r from-[#070b14] via-[#070b14]/90 to-transparent"></div>
-                <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-transparent to-transparent"></div>
-              </div>
+          <div className="space-y-[84px]">
+            {/* 3. HERO SECTION */}
+            <section className="relative">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+                {/* Left: Headline and CTA */}
+                <div className="lg:col-span-7 space-y-6">
+                  <div className="text-sm font-light text-[#B5BAC0] tracking-[0.2em] uppercase">
+                    GENUINE &amp; OEM AUTOMOTIVE SPARE PARTS
+                  </div>
 
-              <div className="relative z-10 px-6 py-14 sm:px-12 sm:py-20 max-w-3xl space-y-6">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-950/80 border border-amber-700/60 text-xs font-semibold text-amber-300">
-                  <Zap className="w-3.5 h-3.5 fill-current" />
-                  Automotive Systems Architecture &amp; Single Parts Reverse-RFQ
+                  <h1 className="text-[40px] sm:text-[54px] lg:text-[68px] font-bold text-[#F5F5F5] leading-[1.05] tracking-tight">
+                    Find the Right Part.
+                    <span className="block text-[#F5F5F5]">Skip the Walk.</span>
+                  </h1>
+
+                  <p className="text-[#B5BAC0] text-sm sm:text-base leading-relaxed max-w-xl font-light">
+                    Broadcast your spare parts requirement directly to verified shops in Teklehaymanot, Kera, and Somali Tera. Compare sealed bids, photos, and warranties—with your payment protected in escrow until physical delivery inspection.
+                  </p>
+
+                  <div className="pt-2 flex flex-wrap gap-4 items-center">
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById("vehicle-finder-bar");
+                        if (el) el.scrollIntoView({ behavior: "smooth" });
+                        else setCurrentRole("market");
+                      }}
+                      className="btn-pill-primary text-sm sm:text-base px-8 py-3.5"
+                    >
+                      Find my part
+                    </button>
+
+                    <button
+                      onClick={() => setCurrentRole("market")}
+                      className="btn-pill-ghost text-sm px-6 py-3"
+                    >
+                      Browse All Parts
+                    </button>
+                  </div>
                 </div>
 
-                <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight">
-                  Automotive Systems &amp; Single Spare Parts.
-                  <span className="block text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-300 to-emerald-400">
-                    Broken Down by Component &amp; Model.
+                {/* Right: Dark Photo Fading into Black with mask gradient */}
+                <div className="lg:col-span-5 relative">
+                  <div className="relative w-full h-[320px] sm:h-[400px] lg:h-[460px] rounded-2xl overflow-hidden bg-[#050506]">
+                    <img
+                      src="/images/car-exploded-schematic.jpg"
+                      alt="Automotive Component Architecture"
+                      className="w-full h-full object-cover filter contrast-125 brightness-90 [mask-image:radial-gradient(circle_at_center,black_40%,transparent_92%)]"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#050506] via-transparent to-transparent"></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row of 3 Features under Hero */}
+              <div className="mt-12 pt-8 border-t border-[#3A3F45] grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
+                {/* Feature 1 */}
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-[#15171A] border border-[#3A3F45] flex items-center justify-center shrink-0 text-white">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div className="w-[2px] h-8 bg-[#D93A10] shrink-0"></div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#F5F5F5]">Verified Addis Merchants</h3>
+                    <p className="text-xs italic text-[#B5BAC0] mt-0.5">Teklehaymanot, Kera, Somali Tera</p>
+                  </div>
+                </div>
+
+                {/* Feature 2 */}
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-[#15171A] border border-[#3A3F45] flex items-center justify-center shrink-0 text-white">
+                    <Lock className="w-5 h-5" />
+                  </div>
+                  <div className="w-[2px] h-8 bg-[#D93A10] shrink-0"></div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#F5F5F5]">Escrow Handshake</h3>
+                    <p className="text-xs italic text-[#B5BAC0] mt-0.5">Payment released after 4-digit PIN verification</p>
+                  </div>
+                </div>
+
+                {/* Feature 3 */}
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-[#15171A] border border-[#3A3F45] flex items-center justify-center shrink-0 text-white">
+                    <Truck className="w-5 h-5" />
+                  </div>
+                  <div className="w-[2px] h-8 bg-[#D93A10] shrink-0"></div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#F5F5F5]">Tamper-Sealed Delivery</h3>
+                    <p className="text-xs italic text-[#B5BAC0] mt-0.5">Numbered seal photo before garage hand-off</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* 4. VEHICLE FINDER GLASS PILL */}
+            <section id="vehicle-finder-bar" className="relative -mt-4 lg:-mt-6 z-20">
+              {/* Desktop Wide Glass Pill Bar */}
+              <div className="hidden sm:flex items-center justify-between gap-3 bg-[rgba(21,23,26,0.85)] backdrop-blur-[14px] border border-[#D93A10]/50 shadow-[0_8px_32px_rgba(217,58,16,0.18)] rounded-full px-7 py-3">
+                <div className="flex items-center gap-2 shrink-0">
+                  <Wrench className="w-4 h-4 text-[#FF6A3D]" />
+                  <span className="text-xs uppercase font-bold tracking-wider text-[#FF6A3D] whitespace-nowrap">
+                    Select your vehicle
                   </span>
-                </h1>
-
-                <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-                  Explore complete exploded diagrams—from the <strong className="text-white">Engine Management Network</strong> (ECU, MAP, MAF, CKP, O2 Sensors) to the <strong className="text-white">Car Braking System</strong> (ABS Module, Rotors, Calipers, Speed Sensors). Select the exact single parts needed for your repair build and broadcast a sealed RFQ to Addis Ababa merchants.
-                </p>
-
-                <div className="flex flex-wrap gap-3 pt-2">
-                  <button
-                    onClick={() => setCurrentRole("market")}
-                    className="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs sm:text-sm font-black flex items-center gap-2 shadow-lg shadow-orange-500/25 transition transform hover:-translate-y-0.5"
-                  >
-                    <Zap className="w-4 h-4 fill-current" />
-                    Open Systems &amp; Parts Explorer
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentRole("buyer")}
-                    className="px-5 py-3 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-blue-400 text-xs sm:text-sm font-bold flex items-center gap-2 transition"
-                  >
-                    <Wrench className="w-4 h-4" />
-                    Enter Garage / Buyer Portal
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentRole("vendor")}
-                    className="px-5 py-3 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-emerald-400 text-xs sm:text-sm font-bold flex items-center gap-2 transition"
-                  >
-                    <Store className="w-4 h-4" />
-                    Vendor Quoting Console
-                  </button>
                 </div>
-              </div>
-            </div>
 
-            {/* Exploded System Previews */}
-            <div className="space-y-4">
+                <div className="h-6 w-px bg-[#3A3F45] shrink-0"></div>
+
+                {/* Make Select */}
+                <div className="flex-1 min-w-[120px]">
+                  <select
+                    value={finderBrand}
+                    onChange={(e) => setFinderBrand(e.target.value)}
+                    className="w-full bg-transparent text-xs text-[#F5F5F5] font-medium border-0 focus:ring-0 cursor-pointer"
+                  >
+                    <option value="TOYOTA" className="bg-[#0F1012] text-[#F5F5F5]">Toyota</option>
+                    <option value="BYD" className="bg-[#0F1012] text-[#F5F5F5]">BYD Electric</option>
+                    <option value="HYUNDAI" className="bg-[#0F1012] text-[#F5F5F5]">Hyundai</option>
+                    <option value="SUZUKI" className="bg-[#0F1012] text-[#F5F5F5]">Suzuki</option>
+                    <option value="ISUZU" className="bg-[#0F1012] text-[#F5F5F5]">Isuzu Commercial</option>
+                  </select>
+                </div>
+
+                <div className="h-6 w-px bg-[#3A3F45] shrink-0"></div>
+
+                {/* Model Select */}
+                <div className="flex-1 min-w-[150px]">
+                  <select
+                    value={finderModel}
+                    onChange={(e) => setFinderModel(e.target.value)}
+                    className="w-full bg-transparent text-xs text-[#F5F5F5] font-medium border-0 focus:ring-0 cursor-pointer"
+                  >
+                    {finderBrand === "TOYOTA" && (
+                      <>
+                        <option value="HIACE" className="bg-[#0F1012] text-[#F5F5F5]">HiAce Minibus Taxi</option>
+                        <option value="HILUX" className="bg-[#0F1012] text-[#F5F5F5]">Hilux / Fortuner</option>
+                        <option value="LAND_CRUISER" className="bg-[#0F1012] text-[#F5F5F5]">Land Cruiser HZJ79</option>
+                        <option value="COROLLA_VITZ" className="bg-[#0F1012] text-[#F5F5F5]">Corolla / Vitz</option>
+                      </>
+                    )}
+                    {finderBrand === "BYD" && (
+                      <>
+                        <option value="ATTO3" className="bg-[#0F1012] text-[#F5F5F5]">Atto 3 (EV Compact SUV)</option>
+                        <option value="DOLPHIN" className="bg-[#0F1012] text-[#F5F5F5]">Dolphin (Hatchback)</option>
+                        <option value="SEAGULL" className="bg-[#0F1012] text-[#F5F5F5]">Seagull (City EV)</option>
+                        <option value="QIN_PLUS" className="bg-[#0F1012] text-[#F5F5F5]">Qin Plus (Sedan)</option>
+                      </>
+                    )}
+                    {finderBrand === "HYUNDAI" && (
+                      <>
+                        <option value="TUCSON" className="bg-[#0F1012] text-[#F5F5F5]">Tucson Crossover</option>
+                        <option value="ACCENT" className="bg-[#0F1012] text-[#F5F5F5]">Accent Sedan</option>
+                        <option value="H1" className="bg-[#0F1012] text-[#F5F5F5]">H-1 Commercial Van</option>
+                      </>
+                    )}
+                    {finderBrand === "SUZUKI" && (
+                      <>
+                        <option value="DZIRE" className="bg-[#0F1012] text-[#F5F5F5]">Dzire Taxi (1.2L)</option>
+                        <option value="SWIFT" className="bg-[#0F1012] text-[#F5F5F5]">Swift Hatchback</option>
+                      </>
+                    )}
+                    {finderBrand === "ISUZU" && (
+                      <>
+                        <option value="NPR" className="bg-[#0F1012] text-[#F5F5F5]">NPR Forward Truck (4HF1)</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                <div className="h-6 w-px bg-[#3A3F45] shrink-0"></div>
+
+                {/* Engine Select */}
+                <div className="flex-1 min-w-[130px]">
+                  <select
+                    value={finderEngine}
+                    onChange={(e) => setFinderEngine(e.target.value)}
+                    className="w-full bg-transparent text-xs text-[#F5F5F5] font-medium border-0 focus:ring-0 cursor-pointer"
+                  >
+                    <option value="DIESEL" className="bg-[#0F1012] text-[#F5F5F5]">5L Diesel / D-4D</option>
+                    <option value="PETROL" className="bg-[#0F1012] text-[#F5F5F5]">1.2L - 1.8L Petrol</option>
+                    <option value="EV" className="bg-[#0F1012] text-[#F5F5F5]">Permanent Magnet EV</option>
+                    <option value="HEAVY_DIESEL" className="bg-[#0F1012] text-[#F5F5F5]">4HF1 Commercial</option>
+                  </select>
+                </div>
+
+                {/* Search Button */}
+                <button
+                  onClick={() => {
+                    if (finderBrand === "TOYOTA" && finderModel === "HIACE") setSelectedVehicle("TOYOTA_HIACE");
+                    else if (finderBrand === "TOYOTA" && finderModel === "HILUX") setSelectedVehicle("HILUX");
+                    else if (finderBrand === "TOYOTA" && finderModel === "LAND_CRUISER") setSelectedVehicle("LAND_CRUISER");
+                    else if (finderBrand === "BYD") setSelectedVehicle("BYD_ATTO3");
+                    else if (finderBrand === "HYUNDAI") setSelectedVehicle("HYUNDAI_TUCSON");
+                    else if (finderBrand === "SUZUKI") setSelectedVehicle("SUZUKI_DZIRE");
+                    else if (finderBrand === "ISUZU") setSelectedVehicle("ISUZU_NPR");
+                    else setSelectedVehicle("ALL");
+                    setCurrentRole("market");
+                  }}
+                  className="btn-pill-primary text-xs px-6 py-2.5 shrink-0"
+                >
+                  Find Parts
+                </button>
+              </div>
+
+              {/* Mobile Stacked Card (< 640px) */}
+              <div className="sm:hidden bg-[rgba(21,23,26,0.92)] backdrop-blur-[14px] border border-[#D93A10]/50 shadow-[0_8px_32px_rgba(217,58,16,0.18)] rounded-2xl p-5 space-y-3.5">
+                <div className="flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-[#FF6A3D]" />
+                  <span className="text-xs uppercase font-bold tracking-wider text-[#FF6A3D]">
+                    Select your vehicle
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="text-[10px] text-[#B5BAC0] block mb-1">Make / Brand</label>
+                    <select
+                      value={finderBrand}
+                      onChange={(e) => setFinderBrand(e.target.value)}
+                      className="w-full bg-[#0F1012] border border-[#3A3F45] rounded-xl px-3 py-2 text-xs text-[#F5F5F5]"
+                    >
+                      <option value="TOYOTA">Toyota</option>
+                      <option value="BYD">BYD Electric</option>
+                      <option value="HYUNDAI">Hyundai</option>
+                      <option value="SUZUKI">Suzuki</option>
+                      <option value="ISUZU">Isuzu Commercial</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-[#B5BAC0] block mb-1">Model</label>
+                    <select
+                      value={finderModel}
+                      onChange={(e) => setFinderModel(e.target.value)}
+                      className="w-full bg-[#0F1012] border border-[#3A3F45] rounded-xl px-3 py-2 text-xs text-[#F5F5F5]"
+                    >
+                      {finderBrand === "TOYOTA" && (
+                        <>
+                          <option value="HIACE">HiAce Minibus Taxi</option>
+                          <option value="HILUX">Hilux / Fortuner</option>
+                          <option value="LAND_CRUISER">Land Cruiser HZJ79</option>
+                          <option value="COROLLA_VITZ">Corolla / Vitz</option>
+                        </>
+                      )}
+                      {finderBrand === "BYD" && (
+                        <>
+                          <option value="ATTO3">Atto 3 (EV Compact SUV)</option>
+                          <option value="DOLPHIN">Dolphin (Hatchback)</option>
+                          <option value="SEAGULL">Seagull (City EV)</option>
+                        </>
+                      )}
+                      {finderBrand === "HYUNDAI" && (
+                        <>
+                          <option value="TUCSON">Tucson Crossover</option>
+                          <option value="ACCENT">Accent Sedan</option>
+                        </>
+                      )}
+                      {finderBrand === "SUZUKI" && (
+                        <>
+                          <option value="DZIRE">Dzire Taxi (1.2L)</option>
+                          <option value="SWIFT">Swift Hatchback</option>
+                        </>
+                      )}
+                      {finderBrand === "ISUZU" && (
+                        <>
+                          <option value="NPR">NPR Forward Truck</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-[#B5BAC0] block mb-1">Engine / Fuel</label>
+                    <select
+                      value={finderEngine}
+                      onChange={(e) => setFinderEngine(e.target.value)}
+                      className="w-full bg-[#0F1012] border border-[#3A3F45] rounded-xl px-3 py-2 text-xs text-[#F5F5F5]"
+                    >
+                      <option value="DIESEL">5L Diesel / D-4D</option>
+                      <option value="PETROL">1.2L - 1.8L Petrol</option>
+                      <option value="EV">Permanent Magnet EV</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (finderBrand === "TOYOTA" && finderModel === "HIACE") setSelectedVehicle("TOYOTA_HIACE");
+                    else if (finderBrand === "TOYOTA" && finderModel === "HILUX") setSelectedVehicle("HILUX");
+                    else if (finderBrand === "BYD") setSelectedVehicle("BYD_ATTO3");
+                    else setSelectedVehicle("ALL");
+                    setCurrentRole("market");
+                  }}
+                  className="btn-pill-primary w-full text-xs py-3 mt-1"
+                >
+                  Find Parts
+                </button>
+              </div>
+            </section>
+
+            {/* 5. SHOP BY CATEGORY */}
+            <section className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-black text-white tracking-tight">
-                    Exploded Automotive Systems Architecture
+                  <h2 className="text-2xl sm:text-[34px] font-light text-[#F5F5F5] tracking-tight">
+                    Shop by Category
                   </h2>
-                  <p className="text-xs text-slate-400">
-                    Click any system below to inspect its individual single parts, wiring, and fitment.
+                  <p className="text-xs text-[#B5BAC0] mt-1 font-light">
+                    Visual subsystem architectures with direct sealed bidding across Addis Ababa
                   </p>
                 </div>
                 <button
                   onClick={() => setCurrentRole("market")}
-                  className="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1"
+                  className="btn-pill-ghost text-xs px-5 py-2 shrink-0"
                 >
-                  View All Systems &rarr;
+                  Shop
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {AUTOMOTIVE_SYSTEMS.map((sys) => (
-                  <div
-                    key={sys.id}
-                    onClick={() => {
-                      setSelectedSystemId(sys.id as any);
-                      setMarketViewMode("systems");
-                      setCurrentRole("market");
-                    }}
-                    className="group cursor-pointer rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/60 overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-amber-500/10 flex flex-col justify-between"
+              {/* 4 Photo tiles (aspect 155:179, 14px gap) */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-[14px]">
+                {/* Tile 1: EMS */}
+                <div
+                  onClick={() => {
+                    setSelectedSystemId("ems");
+                    setMarketViewMode("systems");
+                    setCurrentRole("market");
+                  }}
+                  className="group relative aspect-[155/179] rounded-2xl overflow-hidden cursor-pointer border border-[#3A3F45]/80 hover:border-[#D93A10] transition-all duration-300 hover:-translate-y-1 shadow-lg bg-[#0F1012]"
+                >
+                  <img
+                    src="/images/engine-management-system.png"
+                    alt="Engine Management System"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 filter brightness-90"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
+                  <div className="absolute inset-x-0 bottom-0 p-4 flex items-end justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#FF6A3D] block">
+                        EMS &amp; Sensors
+                      </span>
+                      <h3 className="text-sm sm:text-base font-semibold text-[#F5F5F5]">
+                        Engine Management
+                      </h3>
+                    </div>
+                    <span className="text-xs text-[#FF6A3D] font-medium group-hover:translate-x-1 transition-transform">
+                      Explore &rarr;
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tile 2: Braking */}
+                <div
+                  onClick={() => {
+                    setSelectedSystemId("braking");
+                    setMarketViewMode("systems");
+                    setCurrentRole("market");
+                  }}
+                  className="group relative aspect-[155/179] rounded-2xl overflow-hidden cursor-pointer border border-[#3A3F45]/80 hover:border-[#D93A10] transition-all duration-300 hover:-translate-y-1 shadow-lg bg-[#0F1012]"
+                >
+                  <img
+                    src="/images/car-braking-system.jpg"
+                    alt="Car Braking System"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 filter brightness-90"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
+                  <div className="absolute inset-x-0 bottom-0 p-4 flex items-end justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#FF6A3D] block">
+                        Hydraulics &amp; ABS
+                      </span>
+                      <h3 className="text-sm sm:text-base font-semibold text-[#F5F5F5]">
+                        Braking System
+                      </h3>
+                    </div>
+                    <span className="text-xs text-[#FF6A3D] font-medium group-hover:translate-x-1 transition-transform">
+                      Explore &rarr;
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tile 3: Charging & EV */}
+                <div
+                  onClick={() => {
+                    setSelectedSystemId("charging");
+                    setMarketViewMode("systems");
+                    setCurrentRole("market");
+                  }}
+                  className="group relative aspect-[155/179] rounded-2xl overflow-hidden cursor-pointer border border-[#3A3F45]/80 hover:border-[#D93A10] transition-all duration-300 hover:-translate-y-1 shadow-lg bg-[#0F1012]"
+                >
+                  <img
+                    src="/images/catalog/byd-ev-motor-inverter-mcu.jpg"
+                    alt="EV Charging & Starting"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 filter brightness-90"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
+                  <div className="absolute inset-x-0 bottom-0 p-4 flex items-end justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#FF6A3D] block">
+                        EV &amp; High Voltage
+                      </span>
+                      <h3 className="text-sm sm:text-base font-semibold text-[#F5F5F5]">
+                        Charging &amp; Starting
+                      </h3>
+                    </div>
+                    <span className="text-xs text-[#FF6A3D] font-medium group-hover:translate-x-1 transition-transform">
+                      Explore &rarr;
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tile 4: Chassis */}
+                <div
+                  onClick={() => {
+                    setSelectedSystemId("schematic");
+                    setMarketViewMode("systems");
+                    setCurrentRole("market");
+                  }}
+                  className="group relative aspect-[155/179] rounded-2xl overflow-hidden cursor-pointer border border-[#3A3F45]/80 hover:border-[#D93A10] transition-all duration-300 hover:-translate-y-1 shadow-lg bg-[#0F1012]"
+                >
+                  <img
+                    src="/images/car-exploded-schematic.jpg"
+                    alt="Modular Vehicle Architecture"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 filter brightness-90"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
+                  <div className="absolute inset-x-0 bottom-0 p-4 flex items-end justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#FF6A3D] block">
+                        Chassis &amp; Drivetrain
+                      </span>
+                      <h3 className="text-sm sm:text-base font-semibold text-[#F5F5F5]">
+                        Modular Architecture
+                      </h3>
+                    </div>
+                    <span className="text-xs text-[#FF6A3D] font-medium group-hover:translate-x-1 transition-transform">
+                      Explore &rarr;
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* 6. SHOWCASE SECTION (DEEP RED BACKGROUND) */}
+            <section
+              id="showcase-section"
+              className="bg-deep-red-showcase rounded-3xl p-8 sm:p-12 lg:p-16 border border-[#6A4A44]/70 overflow-hidden relative shadow-2xl"
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center relative z-10">
+                {/* Left side */}
+                <div className="lg:col-span-7 space-y-6">
+                  <h2 className="text-3xl sm:text-[40px] lg:text-[48px] font-light text-[#F5F5F5] leading-[1.1] tracking-tight">
+                    One Request. Every Part for Your Car.
+                  </h2>
+
+                  <p className="text-[#B5BAC0] text-sm sm:text-base leading-relaxed font-light max-w-xl">
+                    Addis Ababa mechanics waste hours walking between Somali Tera, Teklehaymanot, and Kera searching for fitments. On TeraSync, verified shops compete with sealed bids and shelf verification photos. Inspect the part before releasing your private 4-digit PIN.
+                  </p>
+
+                  {/* 2x2 grid of boxes with thin borders #6A4A44 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <div className="p-4 rounded-xl border border-[#6A4A44] bg-black/30 backdrop-blur-sm space-y-1">
+                      <div className="text-xs font-semibold text-[#FF6A3D]">Sealed Quotes</div>
+                      <div className="text-xs text-[#B5BAC0] leading-relaxed">
+                        Vendors never see competitor prices. Fair pricing driven by private competition.
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-[#6A4A44] bg-black/30 backdrop-blur-sm space-y-1">
+                      <div className="text-xs font-semibold text-[#FF6A3D]">Shelf Proof Photos</div>
+                      <div className="text-xs text-[#B5BAC0] leading-relaxed">
+                        Every quote requires a live photo of the actual part on the shop's shelf.
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-[#6A4A44] bg-black/30 backdrop-blur-sm space-y-1">
+                      <div className="text-xs font-semibold text-[#FF6A3D]">Physical Inspection</div>
+                      <div className="text-xs text-[#B5BAC0] leading-relaxed">
+                        Inspect bolt patterns, serials, and condition at your workshop bay first.
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-[#6A4A44] bg-black/30 backdrop-blur-sm space-y-1">
+                      <div className="text-xs font-semibold text-[#FF6A3D]">4-Digit Secret PIN</div>
+                      <div className="text-xs text-[#B5BAC0] leading-relaxed">
+                        Funds stay locked in Chapa escrow until you hand the secret PIN to the courier.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => setCurrentRole("market")}
+                      className="btn-pill-primary text-xs sm:text-sm px-8 py-3"
+                    >
+                      Learn More
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right side: dark photo blended into the red */}
+                <div className="lg:col-span-5 relative flex items-center justify-center">
+                  <div className="relative w-full h-[280px] sm:h-[360px] lg:h-[420px] rounded-2xl overflow-hidden">
+                    <img
+                      src="/images/vendor-warehouse.jpg"
+                      alt="Verified Ethiopian Merchant Shelves"
+                      className="w-full h-full object-cover mix-blend-lighten [mask-image:radial-gradient(circle_at_center,black_50%,transparent_92%)] filter contrast-125"
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* 7. TOP SELLERS CAROUSEL */}
+            <section className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl sm:text-[34px] font-light text-[#F5F5F5] tracking-tight">
+                    Top Sellers
+                  </h2>
+                  <p className="text-xs text-[#B5BAC0] mt-1 font-light">
+                    Frequently requested genuine OEM spare parts across Addis Ababa fleets
+                  </p>
+                </div>
+
+                {/* Arrow Controls */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setTopSellerIdx(Math.max(0, topSellerIdx - 1))}
+                    disabled={topSellerIdx === 0}
+                    className="w-10 h-10 rounded-full border border-[#8A8F96] hover:border-[#FF6A3D] text-[#F5F5F5] hover:text-[#FF6A3D] disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition"
+                    aria-label="Previous top sellers"
                   >
-                    <div className="relative h-48 w-full bg-slate-950 overflow-hidden">
+                    &larr;
+                  </button>
+                  <button
+                    onClick={() => setTopSellerIdx(Math.min(3, topSellerIdx + 1))}
+                    disabled={topSellerIdx >= 3}
+                    className="w-10 h-10 rounded-full border border-[#8A8F96] hover:border-[#FF6A3D] text-[#F5F5F5] hover:text-[#FF6A3D] disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition"
+                    aria-label="Next top sellers"
+                  >
+                    &rarr;
+                  </button>
+                </div>
+              </div>
+
+              {/* 5 Cards Row (Horizontal scroll on mobile, responsive carousel) */}
+              <div className="flex sm:grid sm:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto no-scrollbar pb-2 snap-x snap-mandatory">
+                {TOP_SELLERS_LIST.slice(topSellerIdx, topSellerIdx + 5).map((part) => (
+                  <div
+                    key={part.id}
+                    className="min-w-[220px] sm:min-w-0 snap-start flex-1 flex flex-col justify-between p-3.5 rounded-2xl bg-[#0F1012] border border-[#3A3F45] hover:border-[#D93A10] transition-all duration-300 group"
+                  >
+                    {/* Light gray #D9D9D9 tile with aspect 234:278 */}
+                    <div className="relative aspect-[234/278] bg-[#D9D9D9] rounded-xl p-3 flex items-center justify-center overflow-hidden">
                       <img
-                        src={sys.diagramImage}
-                        alt={sys.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        src={part.image}
+                        alt={part.name}
+                        className="w-full h-full object-contain mix-blend-multiply group-hover:scale-105 transition-transform duration-300"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent"></div>
-                      <span className="absolute top-3 left-3 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500 text-slate-950 shadow">
-                        {sys.totalPartsCount}+ Single Parts
+                      {/* Square Accent Tag "Best Seller" */}
+                      <span className="absolute top-2 left-2 bg-[#D93A10] text-white text-[9px] font-bold px-1.5 py-0.5 uppercase tracking-wider rounded-sm shadow-sm">
+                        Best Seller
                       </span>
                     </div>
 
-                    <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
+                    {/* Part Details */}
+                    <div className="pt-3 flex-1 flex flex-col justify-between">
                       <div>
-                        <h3 className="text-base font-bold text-white group-hover:text-amber-400 transition">
-                          {sys.name}
+                        <h3 className="font-medium text-sm text-[#F5F5F5] group-hover:text-[#FF6A3D] transition line-clamp-1">
+                          {part.name}
                         </h3>
-                        <p className="text-xs text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-                          {sys.description}
+                        {part.localAmharicName && (
+                          <span className="amharic-text text-[11px] text-[#FF6A3D] block truncate mt-0.5">
+                            {part.localAmharicName}
+                          </span>
+                        )}
+                        <p className="text-xs text-[#B5BAC0] font-mono mt-1">
+                          OEM: {part.sku}
                         </p>
                       </div>
 
-                      <div className="pt-2 flex items-center justify-between border-t border-slate-800 text-xs font-bold text-amber-400">
-                        <span>Inspect Exploded Parts</span>
-                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
-                      </div>
+                      {/* Full-width ghost pill "Get offers" */}
+                      <button
+                        onClick={() => setRfqModalPart(part)}
+                        className="btn-pill-ghost w-full text-xs py-2 mt-3.5"
+                      >
+                        Get offers
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Visual Classified System Pillars */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-black text-white tracking-tight">
-                    Classified Operational Portals
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Live reverse-RFQ execution across Addis Ababa spare parts clusters.
-                  </p>
+            {/* 8. PARTNER CALL-OUT */}
+            <section className="bg-[#D93A10] rounded-3xl p-8 sm:p-12 relative overflow-hidden text-white shadow-2xl">
+              <div className="relative z-10 max-w-2xl space-y-4">
+                <div className="text-xs uppercase tracking-widest font-bold text-white/80">
+                  MERCHANT NETWORK
+                </div>
+                <h2 className="text-2xl sm:text-4xl font-bold tracking-tight text-white leading-tight">
+                  Own a spare parts shop in Addis Ababa?
+                </h2>
+                <p className="text-sm sm:text-base text-white/90 leading-relaxed font-light">
+                  Join hundreds of verified merchants in Teklehaymanot, Kera, and Somali Tera receiving real-time purchase requests every minute. Quote with a photo from your shelf and receive guaranteed payouts directly via Chapa and Telebirr.
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => setCurrentRole("vendor")}
+                    className="rounded-full bg-[#050506] hover:bg-[#15171A] text-[#F5F5F5] hover:text-[#FF6A3D] px-8 py-3.5 font-medium transition text-sm flex items-center gap-2"
+                  >
+                    <span>Register as Verified Shop</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-                <div
-                  onClick={() => setCurrentRole("buyer")}
-                  className="group cursor-pointer bg-slate-900/95 border border-slate-800 hover:border-blue-500 rounded-2xl overflow-hidden transition p-5 space-y-3"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center">
-                    <Wrench className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-base font-bold text-white group-hover:text-blue-400 transition">
-                    Garage Workbench
-                  </h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Compare sealed bids with shelf photos from verified merchants. Lock funds in Chapa escrow.
-                  </p>
-                </div>
-
-                <div
-                  onClick={() => setCurrentRole("vendor")}
-                  className="group cursor-pointer bg-slate-900/95 border border-slate-800 hover:border-emerald-500 rounded-2xl overflow-hidden transition p-5 space-y-3"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center">
-                    <Store className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-base font-bold text-white group-hover:text-emerald-400 transition">
-                    Vendor Quoting Drawer
-                  </h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Access live RFQ demand feeds. Submit sealed prices with shelf verification photos.
-                  </p>
-                </div>
-
-                <div
-                  onClick={() => setCurrentRole("courier")}
-                  className="group cursor-pointer bg-slate-900/95 border border-slate-800 hover:border-amber-500 rounded-2xl overflow-hidden transition p-5 space-y-3"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-amber-600/20 text-amber-400 flex items-center justify-center">
-                    <Bike className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-base font-bold text-white group-hover:text-amber-400 transition">
-                    Courier Tamper Seal &amp; PIN
-                  </h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Numbered seal photo at pickup, plus cryptographic 4-digit PIN exchange upon delivery.
-                  </p>
-                </div>
-
-                <div
-                  onClick={() => setCurrentRole("admin")}
-                  className="group cursor-pointer bg-slate-900/95 border border-slate-800 hover:border-purple-500 rounded-2xl overflow-hidden transition p-5 space-y-3"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-purple-600/20 text-purple-400 flex items-center justify-center">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-base font-bold text-white group-hover:text-purple-400 transition">
-                    Operations &amp; Dispute Desk
-                  </h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Escrow fund custody, fitment dispute arbitration, and audit log settlement.
-                  </p>
-                </div>
-              </div>
-            </div>
+            </section>
           </div>
         )}
 
@@ -739,17 +1666,17 @@ export default function TeraSyncPlatform() {
         {currentRole === "market" && (
           <div className="space-y-6">
             {/* Top Toolbar: Vehicle Selector, Search & View Mode Switcher */}
-            <div className="p-6 rounded-3xl bg-gradient-to-br from-[#0c1427] via-[#0d1629] to-[#121a2f] border border-amber-500/30 shadow-2xl space-y-6">
+            <div className="p-6 rounded-3xl bg-[#0F1012] border border-[#D93A10]/50 shadow-2xl space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[11px] font-bold border border-amber-500/30 mb-2">
+                  <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#D93A10]/15 text-[#FF6A3D] text-[11px] font-bold border border-[#D93A10]/50 mb-2">
                     <Zap className="w-3 h-3 fill-current" />
                     Automotive Systems &amp; Single Component Breakdown
                   </div>
                   <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                     {marketViewMode === "systems" ? activeSystem.name : "Spare Parts Catalog & Feed"}
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-[#B5BAC0]">
                     {marketViewMode === "systems"
                       ? "Select and inspect the single parts required to construct or repair this system. Add parts to your build bundle or request immediate quotes."
                       : "Search and filter all single automotive parts across Ethiopian fleet models."}
@@ -757,13 +1684,13 @@ export default function TeraSyncPlatform() {
                 </div>
 
                 {/* View Switcher Pill */}
-                <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
+                <div className="flex items-center gap-2 bg-[#050506] p-1.5 rounded-2xl border border-[#3A3F45]">
                   <button
                     onClick={() => setMarketViewMode("systems")}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                       marketViewMode === "systems"
                         ? "bg-amber-500 text-slate-950 shadow"
-                        : "text-slate-400 hover:text-white"
+                        : "text-[#B5BAC0] hover:text-white"
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5" />
@@ -774,7 +1701,7 @@ export default function TeraSyncPlatform() {
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                       marketViewMode === "grid"
                         ? "bg-amber-500 text-slate-950 shadow"
-                        : "text-slate-400 hover:text-white"
+                        : "text-[#B5BAC0] hover:text-white"
                     }`}
                   >
                     <PackageCheck className="w-3.5 h-3.5" />
@@ -786,26 +1713,26 @@ export default function TeraSyncPlatform() {
               {/* Vehicle Garage Fitment & Search Filters */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-2">
                 <div className="md:col-span-5 relative">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                  <Search className="w-4 h-4 text-[#B5BAC0] absolute left-3.5 top-3.5" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search single part (e.g. MAP sensor, ABS module, 1KD ECU, MAF)..."
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#050506] border border-[#3A3F45] text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#D93A10]"
                   />
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery("")}
-                      className="absolute right-3 top-3 text-slate-400 hover:text-white"
+                      className="absolute right-3 top-3 text-[#B5BAC0] hover:text-white"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   )}
                 </div>
 
-                <div className="md:col-span-4 bg-slate-950 rounded-xl px-3 py-2 border border-slate-800 flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-amber-400 shrink-0" />
+                <div className="md:col-span-4 bg-[#050506] rounded-xl px-3 py-2 border border-[#3A3F45] flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-[#FF6A3D] shrink-0" />
                   <div className="flex-1">
                     <select
                       value={selectedVehicle}
@@ -813,7 +1740,7 @@ export default function TeraSyncPlatform() {
                       className="w-full bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
                     >
                       {VEHICLE_GARAGE_OPTIONS.map((opt) => (
-                        <option key={opt.id} value={opt.id} className="bg-slate-900 text-white">
+                        <option key={opt.id} value={opt.id} className="bg-[#0F1012] text-white">
                           {opt.label}
                         </option>
                       ))}
@@ -821,31 +1748,31 @@ export default function TeraSyncPlatform() {
                   </div>
                 </div>
 
-                <div className="md:col-span-3 flex items-center bg-slate-950 rounded-xl p-1 border border-slate-800">
+                <div className="md:col-span-3 flex items-center bg-[#050506] rounded-xl p-1 border border-[#3A3F45]">
                   <select
                     value={selectedMarketHub}
                     onChange={(e) => setSelectedMarketHub(e.target.value)}
-                    className="w-full bg-transparent px-2 py-1.5 text-xs font-semibold text-slate-300 focus:outline-none cursor-pointer"
+                    className="w-full bg-transparent px-2 py-1.5 text-xs font-semibold text-[#D0D4DA] focus:outline-none cursor-pointer"
                   >
-                    <option value="ALL" className="bg-slate-900 text-white">All Market Hubs</option>
-                    <option value="Teklehaymanot" className="bg-slate-900 text-white">Teklehaymanot (New OEM)</option>
-                    <option value="Kera" className="bg-slate-900 text-white">Kera (Truck &amp; Engines)</option>
-                    <option value="Somali Tera" className="bg-slate-900 text-white">Somali Tera (Scrap Cuts)</option>
+                    <option value="ALL" className="bg-[#0F1012] text-white">All Market Hubs</option>
+                    <option value="Teklehaymanot" className="bg-[#0F1012] text-white">Teklehaymanot (New OEM)</option>
+                    <option value="Kera" className="bg-[#0F1012] text-white">Kera (Truck &amp; Engines)</option>
+                    <option value="Somali Tera" className="bg-[#0F1012] text-white">Somali Tera (Scrap Cuts)</option>
                   </select>
                 </div>
               </div>
 
               {/* OBD-II Fault Code & Diagnostic Troubleshooting Filter */}
-              <div className="border-t border-slate-800/80 pt-3 space-y-2">
+              <div className="border-t border-[#3A3F45] pt-3 space-y-2">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400 flex items-center gap-1.5 font-bold uppercase tracking-wider text-[11px]">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-[#B5BAC0] flex items-center gap-1.5 font-bold uppercase tracking-wider text-[11px]">
+                    <AlertTriangle className="w-3.5 h-3.5 text-[#FF6A3D]" />
                     OBD-II Diagnostic Trouble Code (DTC) Quick Filter:
                   </span>
                   {selectedDtc !== "ALL" && (
                     <button
                       onClick={() => setSelectedDtc("ALL")}
-                      className="text-[11px] text-amber-400 hover:underline flex items-center gap-1 font-semibold"
+                      className="text-[11px] text-[#FF6A3D] hover:underline flex items-center gap-1 font-semibold"
                     >
                       ✕ Reset DTC Filter
                     </button>
@@ -859,7 +1786,7 @@ export default function TeraSyncPlatform() {
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 ${
                         selectedDtc === dtc.code
                           ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
-                          : "bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+                          : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
                       }`}
                     >
                       {dtc.label}
@@ -870,7 +1797,7 @@ export default function TeraSyncPlatform() {
 
               {/* System Architecture Selector Tabs (when in Exploded System View) */}
               {marketViewMode === "systems" && (
-                <div className="border-t border-slate-800/80 pt-4 space-y-3">
+                <div className="border-t border-[#3A3F45] pt-4 space-y-3">
                   <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
                     {AUTOMOTIVE_SYSTEMS.map((sys) => (
                       <button
@@ -881,13 +1808,13 @@ export default function TeraSyncPlatform() {
                         }}
                         className={`px-4 py-2.5 rounded-xl text-xs font-bold shrink-0 flex items-center gap-2 transition ${
                           selectedSystemId === sys.id
-                            ? "bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-lg shadow-orange-500/20 font-black"
-                            : "bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+                            ? "bg-[#D93A10] text-slate-950 shadow-lg shadow-orange-500/20 font-black"
+                            : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
                         }`}
                       >
                         <span>{sys.id === "ems" ? "🧠" : sys.id === "braking" ? "🛑" : "🚗"}</span>
                         <span>{sys.name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${selectedSystemId === sys.id ? "bg-slate-950/20 text-slate-950" : "bg-slate-900 text-slate-400"}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${selectedSystemId === sys.id ? "bg-[#050506]/90 text-slate-950" : "bg-[#0F1012] text-[#B5BAC0]"}`}>
                           {sys.totalPartsCount}
                         </span>
                       </button>
@@ -901,7 +1828,7 @@ export default function TeraSyncPlatform() {
                       className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition ${
                         selectedSubcategory === "ALL"
                           ? "bg-blue-600 text-white"
-                          : "bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+                          : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
                       }`}
                     >
                       All Components ({activeSystem.singleParts.length})
@@ -913,7 +1840,7 @@ export default function TeraSyncPlatform() {
                         className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition ${
                           selectedSubcategory === subcat
                             ? "bg-blue-600 text-white"
-                            : "bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+                            : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
                         }`}
                       >
                         {subcat}
@@ -935,7 +1862,7 @@ export default function TeraSyncPlatform() {
                     <h4 className="text-sm font-bold text-white">
                       System Build Bundle Active ({buildBundle.length} Single Parts Selected)
                     </h4>
-                    <p className="text-xs text-slate-300">
+                    <p className="text-xs text-[#D0D4DA]">
                       Estimated Package Total:{" "}
                       <strong className="text-emerald-400">
                         {buildBundle.reduce((sum, p) => sum + p.priceEstBirr, 0).toLocaleString()} ETB
@@ -947,13 +1874,13 @@ export default function TeraSyncPlatform() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setBuildBundle([])}
-                    className="px-3 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700"
+                    className="px-3 py-2 rounded-xl bg-[#1E2024] text-[#D0D4DA] text-xs font-semibold hover:bg-[#2A2E33]"
                   >
                     Clear Bundle
                   </button>
                   <button
                     onClick={handleBroadcastBundleRfq}
-                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black shadow-lg shadow-orange-500/30 transition flex items-center gap-1.5"
+                    className="px-5 py-2 rounded-xl bg-[#D93A10] hover:bg-[#F04A1C] text-slate-950 text-xs font-black shadow-lg shadow-orange-500/30 transition flex items-center gap-1.5"
                   >
                     <Zap className="w-4 h-4 fill-current" />
                     Broadcast Combined Build RFQ
@@ -966,7 +1893,7 @@ export default function TeraSyncPlatform() {
             {marketViewMode === "systems" && (
               <div className="space-y-6">
                 {/* Visual Architecture Banner Card */}
-                <div className="relative rounded-3xl overflow-hidden border border-slate-800 bg-[#0c1222] shadow-2xl">
+                <div className="relative rounded-3xl overflow-hidden border border-[#3A3F45] bg-[#0c1222] shadow-2xl">
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 items-center">
                     <div className="lg:col-span-5 space-y-4">
                       <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-950/80 text-blue-300 border border-blue-800 text-[11px] font-bold">
@@ -976,26 +1903,26 @@ export default function TeraSyncPlatform() {
                       <h3 className="text-2xl font-black text-white leading-tight">
                         {activeSystem.name}
                       </h3>
-                      <p className="text-xs text-slate-300 leading-relaxed">
+                      <p className="text-xs text-[#D0D4DA] leading-relaxed">
                         {activeSystem.description}
                       </p>
-                      <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs space-y-1">
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">
+                      <div className="p-3.5 rounded-xl bg-[#050506]/90 border border-[#3A3F45] text-xs space-y-1">
+                        <div className="text-[10px] text-[#B5BAC0] uppercase tracking-wider font-bold">
                           Central Hub &amp; Interface:
                         </div>
-                        <div className="font-bold text-amber-400">{activeSystem.centralHub}</div>
+                        <div className="font-bold text-[#FF6A3D]">{activeSystem.centralHub}</div>
                       </div>
                     </div>
 
                     <div className="lg:col-span-7 flex flex-col items-center">
-                      <div className="relative w-full max-h-[380px] rounded-2xl overflow-hidden border border-slate-800 bg-black flex items-center justify-center shadow-inner">
+                      <div className="relative w-full max-h-[380px] rounded-2xl overflow-hidden border border-[#3A3F45] bg-black flex items-center justify-center shadow-inner">
                         <img
                           src={activeSystem.diagramImage}
                           alt={activeSystem.name}
                           className="w-full h-full object-contain max-h-[380px]"
                         />
                       </div>
-                      <span className="text-[11px] text-slate-400 italic mt-2 text-center">
+                      <span className="text-[11px] text-[#B5BAC0] italic mt-2 text-center">
                         {activeSystem.diagramCaption}
                       </span>
                     </div>
@@ -1003,10 +1930,10 @@ export default function TeraSyncPlatform() {
                 </div>
 
                 {/* Single Constituent Parts Header */}
-                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                <div className="flex items-center justify-between text-xs text-[#B5BAC0] px-1">
                   <div>
                     Showing <strong className="text-white">{filteredParts.length}</strong> single constituent parts in{" "}
-                    <strong className="text-amber-400">{activeSystem.name}</strong>
+                    <strong className="text-[#FF6A3D]">{activeSystem.name}</strong>
                   </div>
                   <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
                     <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1024,27 +1951,27 @@ export default function TeraSyncPlatform() {
                         className={`rounded-2xl border transition-all duration-300 flex flex-col justify-between overflow-hidden ${
                           isSelectedInBundle
                             ? "bg-blue-950/30 border-blue-500 shadow-lg shadow-blue-500/10"
-                            : "bg-slate-900/90 border-slate-800 hover:border-amber-500/60"
+                            : "bg-[#0F1012]/95 border-[#3A3F45] hover:border-[#D93A10]/50"
                         }`}
                       >
                         <div className="p-4 space-y-3">
                           <div className="flex items-start justify-between gap-2">
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#D93A10]/15 text-[#FF6A3D] border border-[#D93A10]/50">
                               {part.systemSubcategory}
                             </span>
-                            <span className="text-[10px] font-mono font-bold text-slate-400">
+                            <span className="text-[10px] font-mono font-bold text-[#B5BAC0]">
                               {part.voltage}
                             </span>
                           </div>
 
                           {/* Component Visual Reference Image */}
-                          <div className="relative w-full h-44 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center p-2 group">
+                          <div className="relative w-full h-44 rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] flex items-center justify-center p-2 group">
                             <img
                               src={part.image}
                               alt={part.name}
                               className="w-full h-full object-contain hover:scale-105 transition-transform duration-300"
                             />
-                            <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/80 backdrop-blur-md text-[10px] font-mono text-amber-300 border border-slate-700/80">
+                            <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/80 backdrop-blur-md text-[10px] font-mono text-[#FF6A3D] border border-[#4A4F55]">
                               {part.sku}
                             </span>
                           </div>
@@ -1062,12 +1989,12 @@ export default function TeraSyncPlatform() {
 
                           {part.dtcCodes && part.dtcCodes.length > 0 && (
                             <div className="flex flex-wrap items-center gap-1">
-                              <span className="text-[10px] text-slate-500 font-semibold">DTC:</span>
+                              <span className="text-[10px] text-[#8A8F96] font-semibold">DTC:</span>
                               {part.dtcCodes.map((code) => (
                                 <button
                                   key={code}
                                   onClick={() => setSelectedDtc(code.split("/")[0])}
-                                  className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800/70 hover:bg-amber-800/50"
+                                  className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/70 hover:bg-amber-800/50"
                                 >
                                   {code}
                                 </button>
@@ -1075,22 +2002,22 @@ export default function TeraSyncPlatform() {
                             </div>
                           )}
 
-                          <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] space-y-1">
-                            <span className="text-[10px] uppercase font-bold text-slate-400">Role in System:</span>
-                            <p className="text-slate-300 leading-relaxed text-[11px]">
+                          <div className="p-2.5 rounded-xl bg-[#050506] border border-[#3A3F45] text-[11px] space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-[#B5BAC0]">Role in System:</span>
+                            <p className="text-[#D0D4DA] leading-relaxed text-[11px]">
                               {part.role}
                             </p>
                           </div>
 
                           {(part.laborTimeEst || part.difficulty) && (
-                            <div className="flex items-center justify-between text-[11px] py-1 px-2.5 rounded-lg bg-slate-950/90 border border-slate-800">
-                              <span className="text-slate-400 flex items-center gap-1 font-mono">
-                                <Clock className="w-3 h-3 text-slate-500" />
-                                Labor: <strong className="text-slate-200">{part.laborTimeEst || "45 mins"}</strong>
+                            <div className="flex items-center justify-between text-[11px] py-1 px-2.5 rounded-lg bg-[#050506]/90 border border-[#3A3F45]">
+                              <span className="text-[#B5BAC0] flex items-center gap-1 font-mono">
+                                <Clock className="w-3 h-3 text-[#8A8F96]" />
+                                Labor: <strong className="text-[#F5F5F5]">{part.laborTimeEst || "45 mins"}</strong>
                               </span>
                               <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
                                 part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "bg-red-950/70 text-red-300 border border-red-800/60" :
-                                part.difficulty === "INTERMEDIATE" ? "bg-amber-950/70 text-amber-300 border border-amber-800/60" :
+                                part.difficulty === "INTERMEDIATE" ? "bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/60" :
                                 "bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
                               }`}>
                                 {part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "PRO GARAGE" :
@@ -1112,28 +2039,28 @@ export default function TeraSyncPlatform() {
                           )}
 
                           {part.toolsRequired && part.toolsRequired.length > 0 && (
-                            <div className="text-[11px] text-slate-400 flex items-start gap-1">
-                              <span className="text-slate-500 font-semibold shrink-0">Tools:</span>
-                              <span className="text-slate-300">{part.toolsRequired.join(", ")}</span>
+                            <div className="text-[11px] text-[#B5BAC0] flex items-start gap-1">
+                              <span className="text-[#8A8F96] font-semibold shrink-0">Tools:</span>
+                              <span className="text-[#D0D4DA]">{part.toolsRequired.join(", ")}</span>
                             </div>
                           )}
 
                           <div className="space-y-1 text-[11px]">
-                            <div className="text-slate-400">
-                              Brand: <strong className="text-slate-200">{part.brand}</strong> ({part.conditionLabel})
+                            <div className="text-[#B5BAC0]">
+                              Brand: <strong className="text-[#F5F5F5]">{part.brand}</strong> ({part.conditionLabel})
                             </div>
-                            <div className="text-slate-400 flex items-center gap-1">
-                              <MapPin className="w-3 h-3 text-slate-500" />
+                            <div className="text-[#B5BAC0] flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-[#8A8F96]" />
                               {part.marketHub} &bull; {part.stockVendorsCount} Shops
                             </div>
                           </div>
 
-                          <div className="pt-2 flex items-baseline justify-between border-t border-slate-800">
+                          <div className="pt-2 flex items-baseline justify-between border-t border-[#3A3F45]">
                             <div>
                               <div className="text-base font-black text-white">
                                 {part.priceEstBirr.toLocaleString()} ETB
                               </div>
-                              <div className="text-[10px] text-slate-500 line-through">
+                              <div className="text-[10px] text-[#8A8F96] line-through">
                                 {part.originalPriceBirr.toLocaleString()} ETB
                               </div>
                             </div>
@@ -1144,13 +2071,13 @@ export default function TeraSyncPlatform() {
                         </div>
 
                         {/* Actions */}
-                        <div className="p-4 pt-0 space-y-2 border-t border-slate-800/60">
+                        <div className="p-4 pt-0 space-y-2 border-t border-[#3A3F45]">
                           <button
                             onClick={() => toggleBundlePart(part)}
                             className={`w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                               isSelectedInBundle
                                 ? "bg-blue-600 text-white"
-                                : "bg-slate-950 hover:bg-slate-800 text-blue-400 border border-slate-800"
+                                : "bg-[#050506] hover:bg-[#1E2024] text-blue-400 border border-[#3A3F45]"
                             }`}
                           >
                             <PackageCheck className="w-3.5 h-3.5" />
@@ -1159,7 +2086,7 @@ export default function TeraSyncPlatform() {
 
                           <button
                             onClick={() => setRfqModalPart(part)}
-                            className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black transition flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20"
+                            className="w-full py-2 rounded-xl bg-[#D93A10] hover:bg-[#F04A1C] text-slate-950 text-xs font-black transition flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20"
                           >
                             <Zap className="w-3.5 h-3.5 fill-current" />
                             Request Single Part Quote
@@ -1175,7 +2102,7 @@ export default function TeraSyncPlatform() {
             {/* Flat Grid Catalog View */}
             {marketViewMode === "grid" && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                <div className="flex items-center justify-between text-xs text-[#B5BAC0] px-1">
                   <div>
                     Showing <strong className="text-white">{allFilteredFlat.length}</strong> total single spare parts across all systems
                   </div>
@@ -1185,16 +2112,16 @@ export default function TeraSyncPlatform() {
                   {allFilteredFlat.map((part) => (
                     <div
                       key={part.id}
-                      className="rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/60 transition flex flex-col justify-between overflow-hidden"
+                      className="rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] hover:border-[#D93A10]/50 transition flex flex-col justify-between overflow-hidden"
                     >
                       <div className="p-4 space-y-3">
-                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <div className="flex items-center justify-between text-[11px] text-[#B5BAC0]">
                           <span className="font-mono">{part.sku}</span>
-                          <span className="text-amber-400 font-semibold">{part.voltage}</span>
+                          <span className="text-[#FF6A3D] font-semibold">{part.voltage}</span>
                         </div>
 
                         {/* Component Visual Reference Image */}
-                        <div className="relative w-full h-40 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center p-2">
+                        <div className="relative w-full h-40 rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] flex items-center justify-center p-2">
                           <img
                             src={part.image}
                             alt={part.name}
@@ -1213,12 +2140,12 @@ export default function TeraSyncPlatform() {
 
                         {part.dtcCodes && part.dtcCodes.length > 0 && (
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] text-slate-500 font-semibold">DTC:</span>
+                            <span className="text-[10px] text-[#8A8F96] font-semibold">DTC:</span>
                             {part.dtcCodes.map((code) => (
                               <button
                                 key={code}
                                 onClick={() => setSelectedDtc(code.split("/")[0])}
-                                className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800/70 hover:bg-amber-800/50"
+                                className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/70 hover:bg-amber-800/50"
                               >
                                 {code}
                               </button>
@@ -1226,17 +2153,17 @@ export default function TeraSyncPlatform() {
                           </div>
                         )}
 
-                        <p className="text-xs text-slate-400 line-clamp-2">{part.role}</p>
+                        <p className="text-xs text-[#B5BAC0] line-clamp-2">{part.role}</p>
 
                         {(part.laborTimeEst || part.difficulty) && (
-                          <div className="flex items-center justify-between text-[11px] py-1 px-2 rounded-lg bg-slate-950/90 border border-slate-800">
-                            <span className="text-slate-400 flex items-center gap-1 font-mono">
-                              <Clock className="w-3 h-3 text-slate-500" />
-                              Labor: <strong className="text-slate-200">{part.laborTimeEst || "45m"}</strong>
+                          <div className="flex items-center justify-between text-[11px] py-1 px-2 rounded-lg bg-[#050506]/90 border border-[#3A3F45]">
+                            <span className="text-[#B5BAC0] flex items-center gap-1 font-mono">
+                              <Clock className="w-3 h-3 text-[#8A8F96]" />
+                              Labor: <strong className="text-[#F5F5F5]">{part.laborTimeEst || "45m"}</strong>
                             </span>
                             <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
                               part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "bg-red-950/70 text-red-300 border border-red-800/60" :
-                              part.difficulty === "INTERMEDIATE" ? "bg-amber-950/70 text-amber-300 border border-amber-800/60" :
+                              part.difficulty === "INTERMEDIATE" ? "bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/60" :
                               "bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
                             }`}>
                               {part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "PRO GARAGE" :
@@ -1251,15 +2178,15 @@ export default function TeraSyncPlatform() {
                           </div>
                         )}
 
-                        <div className="text-xs text-slate-400">
-                          Primary: <strong className="text-slate-200">{part.primaryVehicleModel}</strong>
+                        <div className="text-xs text-[#B5BAC0]">
+                          Primary: <strong className="text-[#F5F5F5]">{part.primaryVehicleModel}</strong>
                         </div>
-                        <div className="pt-2 flex items-baseline justify-between border-t border-slate-800">
+                        <div className="pt-2 flex items-baseline justify-between border-t border-[#3A3F45]">
                           <div>
                             <div className="text-base font-black text-white">
                               {part.priceEstBirr.toLocaleString()} ETB
                             </div>
-                            <div className="text-[10px] text-slate-500 line-through">
+                            <div className="text-[10px] text-[#8A8F96] line-through">
                               {part.originalPriceBirr.toLocaleString()} ETB
                             </div>
                           </div>
@@ -1269,13 +2196,13 @@ export default function TeraSyncPlatform() {
                         </div>
                       </div>
 
-                      <div className="p-4 pt-0 space-y-2 border-t border-slate-800/60">
+                      <div className="p-4 pt-0 space-y-2 border-t border-[#3A3F45]">
                         <button
                           onClick={() => toggleBundlePart(part)}
                           className={`w-full py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                             buildBundle.some((p) => p.id === part.id)
                               ? "bg-blue-600 text-white"
-                              : "bg-slate-950 hover:bg-slate-800 text-blue-400 border border-slate-800"
+                              : "bg-[#050506] hover:bg-[#1E2024] text-blue-400 border border-[#3A3F45]"
                           }`}
                         >
                           <PackageCheck className="w-3.5 h-3.5" />
@@ -1300,30 +2227,30 @@ export default function TeraSyncPlatform() {
         {/* Modal: Request Fitment Quote (Reverse-RFQ) from Single Part */}
         {rfqModalPart && (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-[#0e1526] border border-amber-500/40 rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="bg-[#0e1526] border border-[#D93A10]/50 rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-[#3A3F45] pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <div className="w-9 h-9 rounded-xl bg-[#D93A10]/15 text-[#FF6A3D] flex items-center justify-center">
                     <Zap className="w-5 h-5 fill-current" />
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-white">Broadcast Sealed RFQ</h3>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-[#B5BAC0]">
                       Dispatches to verified {rfqModalPart.marketHub} merchants
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setRfqModalPart(null)}
-                  className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+                  className="p-1.5 rounded-lg bg-[#1E2024] text-[#B5BAC0] hover:text-white"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {/* Part Summary Preview with Visual Verification Image */}
-              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-                <div className="w-full h-44 bg-black/70 rounded-xl overflow-hidden border border-slate-800/80 flex items-center justify-center p-2">
+              <div className="p-3.5 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-3">
+                <div className="w-full h-44 bg-black/70 rounded-xl overflow-hidden border border-[#3A3F45] flex items-center justify-center p-2">
                   <img
                     src={rfqModalPart.image}
                     alt={rfqModalPart.name}
@@ -1331,19 +2258,19 @@ export default function TeraSyncPlatform() {
                   />
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                  <span className="text-[10px] font-bold text-[#FF6A3D] uppercase tracking-wider">
                     {rfqModalPart.systemSubcategory} &bull; {rfqModalPart.voltage}
                   </span>
                   <h4 className="text-sm font-bold text-white leading-tight mt-0.5">{rfqModalPart.name}</h4>
-                  <p className="text-[10px] text-slate-400 font-mono">SKU: {rfqModalPart.sku} &bull; {rfqModalPart.brand}</p>
-                  <p className="text-[11px] text-slate-300 italic pt-1">{rfqModalPart.role}</p>
+                  <p className="text-[10px] text-[#B5BAC0] font-mono">SKU: {rfqModalPart.sku} &bull; {rfqModalPart.brand}</p>
+                  <p className="text-[11px] text-[#D0D4DA] italic pt-1">{rfqModalPart.role}</p>
                 </div>
               </div>
 
               {/* Form Fields */}
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  <label className="block text-[11px] font-semibold text-[#D0D4DA] mb-1">
                     Vehicle Plate Number (Chassis Identifier):
                   </label>
                   <input
@@ -1351,12 +2278,12 @@ export default function TeraSyncPlatform() {
                     value={rfqPlateInput}
                     onChange={(e) => setRfqPlateInput(e.target.value)}
                     placeholder="e.g. 3-B48102"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-[#050506] border border-[#3A3F45] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#D93A10]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  <label className="block text-[11px] font-semibold text-[#D0D4DA] mb-1">
                     Garage / Mechanics Delivery Location:
                   </label>
                   <input
@@ -1364,12 +2291,12 @@ export default function TeraSyncPlatform() {
                     value={rfqGarageLocation}
                     onChange={(e) => setRfqGarageLocation(e.target.value)}
                     placeholder="e.g. Tadesse Auto, Bole Medhanialem"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-[#050506] border border-[#3A3F45] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#D93A10]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  <label className="block text-[11px] font-semibold text-[#D0D4DA] mb-1">
                     Delivery Urgency:
                   </label>
                   <div className="grid grid-cols-2 gap-2">
@@ -1378,8 +2305,8 @@ export default function TeraSyncPlatform() {
                       onClick={() => setRfqUrgency("CRITICAL_SAME_DAY")}
                       className={`p-2 rounded-xl text-xs font-bold border transition ${
                         rfqUrgency === "CRITICAL_SAME_DAY"
-                          ? "bg-amber-500/20 text-amber-300 border-amber-500"
-                          : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
+                          ? "bg-[#D93A10]/15 text-[#FF6A3D] border-[#D93A10]"
+                          : "bg-[#050506] text-[#B5BAC0] border-[#3A3F45] hover:text-white"
                       }`}
                     >
                       ⚡ Critical (Same Day)
@@ -1390,7 +2317,7 @@ export default function TeraSyncPlatform() {
                       className={`p-2 rounded-xl text-xs font-bold border transition ${
                         rfqUrgency === "STANDARD_24H"
                           ? "bg-blue-500/20 text-blue-300 border-blue-500"
-                          : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
+                          : "bg-[#050506] text-[#B5BAC0] border-[#3A3F45] hover:text-white"
                       }`}
                     >
                       📦 Standard (24 Hours)
@@ -1403,23 +2330,23 @@ export default function TeraSyncPlatform() {
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
                     Reverse-RFQ Escrow Guarantee:
                   </div>
-                  <p className="text-slate-300">
+                  <p className="text-[#D0D4DA]">
                     Merchants respond with sealed shelf-photo proof. Payout is released to the seller only after your mechanic tests physical bolt fitment and inputs the 4-digit PIN.
                   </p>
                 </div>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#3A3F45]">
                 <button
                   onClick={() => setRfqModalPart(null)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition"
+                  className="px-4 py-2.5 rounded-xl bg-[#1E2024] text-[#D0D4DA] text-xs font-semibold hover:bg-[#2A2E33] transition"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => handleBroadcastRfq(rfqModalPart)}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black shadow-lg shadow-orange-500/30 transition"
+                  className="px-5 py-2.5 rounded-xl bg-[#D93A10] hover:bg-[#F04A1C] text-slate-950 text-xs font-black shadow-lg shadow-orange-500/30 transition"
                 >
                   Broadcast Sealed RFQ Now
                 </button>
@@ -1432,7 +2359,15 @@ export default function TeraSyncPlatform() {
             3. BUYER / GARAGE CLASSIFIED WORKBENCH
         ========================================================================= */}
         {currentRole === "buyer" && (
-          <div className="space-y-6">
+          <ProtectedPortalGuard
+            portalName="Garage Workbench"
+            requiredRole="customer"
+            allowedRoles={["customer"]}
+            currentUser={currentUser}
+            onLoginPrompt={openAuth}
+            onReturnHome={() => setCurrentRole("landing")}
+          >
+            <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-blue-950/30 border border-blue-900/60">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-400 flex items-center justify-center">
@@ -1445,21 +2380,21 @@ export default function TeraSyncPlatform() {
                       Bole Medhanialem
                     </span>
                   </h2>
-                  <p className="text-xs text-slate-400">Live Escrow Orders: 1 | Pending Quotes: {rfqList.length}</p>
+                  <p className="text-xs text-[#B5BAC0]">Live Escrow Orders: 1 | Pending Quotes: {rfqList.length}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCurrentRole("market")}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-md shadow-orange-500/20 transition"
+                  className="px-4 py-2 rounded-xl bg-[#D93A10] hover:bg-[#F04A1C] text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-md shadow-orange-500/20 transition"
                 >
                   <Zap className="w-3.5 h-3.5 fill-current" />
                   Explore Systems &amp; Parts
                 </button>
                 <button
                   onClick={() => setCurrentRole("landing")}
-                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 text-xs"
+                  className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -1468,7 +2403,7 @@ export default function TeraSyncPlatform() {
 
             {/* Workshop Repair Bays & Live Diagnostic Job Cards */}
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#3A3F45] pb-3">
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-bold border border-blue-500/30 mb-1">
                     <Wrench className="w-3 h-3 text-blue-400" />
@@ -1476,20 +2411,20 @@ export default function TeraSyncPlatform() {
                   </div>
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
                     Active Workshop Service Bays &amp; Diagnostic Job Cards
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#1E2024] text-[#D0D4DA] font-mono">
                       {GARAGE_JOB_CARDS.length} Bays In-Service
                     </span>
                   </h3>
                 </div>
-                <p className="text-xs text-slate-400 max-w-md">
-                  Active vehicle repairs in Bole Medhanialem workshop. Click <strong className="text-amber-400">&quot;Load Job Parts to Bundle&quot;</strong> to directly push fault-isolated components into a sealed market RFQ.
+                <p className="text-xs text-[#B5BAC0] max-w-md">
+                  Active vehicle repairs in Bole Medhanialem workshop. Click <strong className="text-[#FF6A3D]">&quot;Load Job Parts to Bundle&quot;</strong> to directly push fault-isolated components into a sealed market RFQ.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {GARAGE_JOB_CARDS.map((jc) => {
                   const statusColors = {
-                    DIAGNOSING: "bg-amber-950/80 text-amber-300 border-amber-800/80",
+                    DIAGNOSING: "bg-[#D93A10]/10 text-[#FF6A3D] border-amber-800/80",
                     PARTS_DISPATCHED: "bg-blue-950/80 text-blue-300 border-blue-800/80",
                     IN_TRANSIT: "bg-purple-950/80 text-purple-300 border-purple-800/80",
                     INSTALLING: "bg-emerald-950/80 text-emerald-300 border-emerald-800/80",
@@ -1499,13 +2434,13 @@ export default function TeraSyncPlatform() {
                   return (
                     <div
                       key={jc.id}
-                      className="p-5 rounded-2xl bg-gradient-to-br from-[#0c1324] via-[#0d1629] to-[#11192e] border border-slate-800 hover:border-blue-500/50 shadow-xl space-y-4 flex flex-col justify-between"
+                      className="p-5 rounded-2xl bg-gradient-to-br from-[#0c1324] via-[#0d1629] to-[#11192e] border border-[#3A3F45] hover:border-blue-500/50 shadow-xl space-y-4 flex flex-col justify-between"
                     >
                       <div className="space-y-3">
                         {/* Bay & Status Header */}
-                        <div className="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-3">
+                        <div className="flex items-start justify-between gap-2 border-b border-[#3A3F45] pb-3">
                           <div>
-                            <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                            <span className="text-[10px] font-mono text-[#B5BAC0] uppercase tracking-wider">
                               {jc.id} &bull; {jc.bayNumber}
                             </span>
                             <h4 className="text-sm font-bold text-white leading-tight mt-0.5">
@@ -1522,43 +2457,43 @@ export default function TeraSyncPlatform() {
                         </div>
 
                         {/* Vehicle Specs Bar */}
-                        <div className="grid grid-cols-2 gap-2 text-[11px] py-1.5 px-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <div className="grid grid-cols-2 gap-2 text-[11px] py-1.5 px-3 rounded-xl bg-[#050506]/90 border border-[#3A3F45]">
                           <div>
-                            <span className="text-slate-500 block text-[9px] uppercase font-bold">Plate / Chassis</span>
+                            <span className="text-[#8A8F96] block text-[9px] uppercase font-bold">Plate / Chassis</span>
                             <span className="font-mono text-white font-semibold">{jc.plate}</span>
                           </div>
                           <div>
-                            <span className="text-slate-500 block text-[9px] uppercase font-bold">Odometer</span>
-                            <span className="font-mono text-amber-300 font-semibold">{jc.mileage}</span>
+                            <span className="text-[#8A8F96] block text-[9px] uppercase font-bold">Odometer</span>
+                            <span className="font-mono text-[#FF6A3D] font-semibold">{jc.mileage}</span>
                           </div>
                         </div>
 
                         {/* Driver Complaint */}
                         <div className="text-xs space-y-0.5">
-                          <span className="text-[10px] uppercase font-bold text-slate-400">Driver Complaint:</span>
-                          <p className="text-slate-300 italic text-[11px] bg-slate-950/40 p-2 rounded-lg border border-slate-800/50">
+                          <span className="text-[10px] uppercase font-bold text-[#B5BAC0]">Driver Complaint:</span>
+                          <p className="text-[#D0D4DA] italic text-[11px] bg-[#050506]/90 p-2 rounded-lg border border-[#3A3F45]">
                             &quot;{jc.complaint}&quot;
                           </p>
                         </div>
 
                         {/* Mechanic Diagnostic Finding */}
                         <div className="text-xs space-y-0.5">
-                          <span className="text-[10px] uppercase font-bold text-amber-400 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span className="text-[10px] uppercase font-bold text-[#FF6A3D] flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3 text-[#FF6A3D]" />
                             Diagnostic Finding &amp; DTC:
                           </span>
-                          <p className="text-amber-200/90 font-mono text-[11px] bg-amber-950/30 p-2 rounded-lg border border-amber-900/40">
+                          <p className="text-amber-200/90 font-mono text-[11px] bg-[#D93A10]/10 p-2 rounded-lg border border-amber-900/40">
                             {jc.diagnosisDtc}
                           </p>
                         </div>
 
                         {/* Tech Assigned & Required Parts */}
                         <div className="flex flex-col gap-2 pt-1">
-                          <div className="text-[11px] text-slate-400">
+                          <div className="text-[11px] text-[#B5BAC0]">
                             Assigned Mechanic: <strong className="text-white">{jc.assignedTech}</strong>
                           </div>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] text-slate-500 font-semibold">Required Parts:</span>
+                            <span className="text-[10px] text-[#8A8F96] font-semibold">Required Parts:</span>
                             {jc.requiredPartIds.map((pid) => (
                               <span
                                 key={pid}
@@ -1572,12 +2507,12 @@ export default function TeraSyncPlatform() {
                       </div>
 
                       {/* Action Button */}
-                      <div className="pt-3 border-t border-slate-800/80">
+                      <div className="pt-3 border-t border-[#3A3F45]">
                         <button
                           onClick={() => handleLoadJobCardParts(jc)}
                           className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
                         >
-                          <Zap className="w-3.5 h-3.5 fill-current text-amber-300" />
+                          <Zap className="w-3.5 h-3.5 fill-current text-[#FF6A3D]" />
                           <span>Load Job Parts to Bundle &amp; Order</span>
                         </button>
                       </div>
@@ -1589,9 +2524,9 @@ export default function TeraSyncPlatform() {
 
             {/* Active Escrow In-Transit Card with Rich Photo Badge & PIN */}
             <div className="p-6 rounded-2xl bg-gradient-to-br from-slate-900 to-[#0e172a] border-2 border-emerald-500/40 shadow-xl relative overflow-hidden">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#3A3F45] pb-4">
                 <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-slate-700 bg-black">
+                  <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-[#4A4F55] bg-black">
                     <img
                       src="/images/gear-precision.jpg"
                       alt="Alternator part inspection"
@@ -1603,38 +2538,38 @@ export default function TeraSyncPlatform() {
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                         ESCROW_LOCKED • IN_TRANSIT
                       </span>
-                      <span className="text-xs text-slate-400 font-mono">Order #TR-2026-0081</span>
+                      <span className="text-xs text-[#B5BAC0] font-mono">Order #TR-2026-0081</span>
                     </div>
                     <h3 className="text-lg font-bold text-white mt-1">
                       Toyota Hilux 1KD Alternator Assembly (80 Amp)
                     </h3>
-                    <p className="text-xs text-slate-400">
-                      Merchant: <strong className="text-slate-200">Alpha Spares (Teklehaymanot)</strong> |
-                      Courier: <strong className="text-slate-200">Abebe (Motorcycle)</strong>
+                    <p className="text-xs text-[#B5BAC0]">
+                      Merchant: <strong className="text-[#F5F5F5]">Alpha Spares (Teklehaymanot)</strong> |
+                      Courier: <strong className="text-[#F5F5F5]">Abebe (Motorcycle)</strong>
                     </p>
                   </div>
                 </div>
 
                 <div className="text-right">
-                  <div className="text-xs text-slate-400">Escrow Total Locked</div>
+                  <div className="text-xs text-[#B5BAC0]">Escrow Total Locked</div>
                   <div className="text-xl font-black text-emerald-400">14,850.00 ETB</div>
-                  <div className="text-[10px] text-slate-500">Chapa Escrow Safe Settlement</div>
+                  <div className="text-[10px] text-[#8A8F96]">Chapa Escrow Safe Settlement</div>
                 </div>
               </div>
 
               {/* Security Handshake Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-2">
-                <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="p-4 rounded-xl bg-[#050506]/90 border border-[#3A3F45] space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400 flex items-center gap-1.5 font-medium">
-                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[#B5BAC0] flex items-center gap-1.5 font-medium">
+                      <Lock className="w-3.5 h-3.5 text-[#FF6A3D]" />
                       Tamper Seal Code:
                     </span>
-                    <span className="font-mono font-bold text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
+                    <span className="font-mono font-bold text-[#FF6A3D] bg-[#D93A10]/10 px-2 py-0.5 rounded border border-amber-800">
                       #TS-8942
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                  <p className="text-[11px] text-[#B5BAC0] leading-relaxed">
                     Compare the physical numbered seal on the delivery pouch with this code before opening.
                   </p>
                 </div>
@@ -1657,7 +2592,7 @@ export default function TeraSyncPlatform() {
                     <div className="font-mono text-2xl font-black tracking-widest text-emerald-400">
                       {pinRevealed ? "7419" : "••••"}
                     </div>
-                    <span className="text-[10px] text-amber-300/90 bg-amber-950/50 px-2 py-1 rounded border border-amber-800/80">
+                    <span className="text-[10px] text-[#FF6A3D]/90 bg-[#D93A10]/10 px-2 py-1 rounded border border-amber-800/80">
                       ⚠️ Give ONLY after bolt inspection!
                     </span>
                   </div>
@@ -1670,7 +2605,7 @@ export default function TeraSyncPlatform() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white">Competing Bids on Request REQ-901</h3>
-                  <p className="text-xs text-slate-400">Toyota Hilux 2018 (Plate: 3-B48102) &bull; Denso 12V 80A Alternator</p>
+                  <p className="text-xs text-[#B5BAC0]">Toyota Hilux 2018 (Plate: 3-B48102) &bull; Denso 12V 80A Alternator</p>
                 </div>
                 <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-950 text-blue-400 border border-blue-800">
                   3 Verified Quotes
@@ -1681,10 +2616,10 @@ export default function TeraSyncPlatform() {
                 {bidsForReq901.map((bid) => (
                   <div
                     key={bid.id}
-                    className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition flex flex-col justify-between"
+                    className="p-5 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] hover:border-[#4A4F55] transition flex flex-col justify-between"
                   >
                     <div>
-                      <div className="relative h-32 w-full rounded-xl overflow-hidden mb-3 border border-slate-800">
+                      <div className="relative h-32 w-full rounded-xl overflow-hidden mb-3 border border-[#3A3F45]">
                         <img
                           src={bid.image}
                           alt={bid.vendorName}
@@ -1697,20 +2632,20 @@ export default function TeraSyncPlatform() {
 
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-white">{bid.vendorName}</span>
-                        <span className="text-amber-400 font-semibold">★ {bid.rating}</span>
+                        <span className="text-[#FF6A3D] font-semibold">★ {bid.rating}</span>
                       </div>
-                      <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-3 h-3 text-slate-500" />
+                      <div className="text-[11px] text-[#B5BAC0] flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-3 h-3 text-[#8A8F96]" />
                         {bid.marketArea}
                       </div>
 
-                      <div className="mt-3 p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 space-y-0.5">
+                      <div className="mt-3 p-2.5 rounded-xl bg-[#050506] border border-[#3A3F45] space-y-0.5">
                         <div className="text-xs font-semibold text-emerald-400">{bid.condition}</div>
-                        <div className="text-[11px] text-slate-300">{bid.warrantyDays} Days Replacement Guarantee</div>
+                        <div className="text-[11px] text-[#D0D4DA]">{bid.warrantyDays} Days Replacement Guarantee</div>
                       </div>
 
                       <div className="mt-4 flex items-baseline justify-between">
-                        <span className="text-xs text-slate-400">Quoted Price:</span>
+                        <span className="text-xs text-[#B5BAC0]">Quoted Price:</span>
                         <span className="text-lg font-black text-white">
                           {bid.priceBirr.toLocaleString()} ETB
                         </span>
@@ -1728,13 +2663,22 @@ export default function TeraSyncPlatform() {
               </div>
             </div>
           </div>
+          </ProtectedPortalGuard>
         )}
 
         {/* =========================================================================
             4. VENDOR / SHOP CLASSIFIED CONSOLE
         ========================================================================= */}
         {currentRole === "vendor" && (
-          <div className="space-y-6">
+          <ProtectedPortalGuard
+            portalName="Merchant Console"
+            requiredRole="shop"
+            allowedRoles={["shop"]}
+            currentUser={currentUser}
+            onLoginPrompt={openAuth}
+            onReturnHome={() => setCurrentRole("landing")}
+          >
+            <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-emerald-950/30 border border-emerald-900/60">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center">
@@ -1747,18 +2691,18 @@ export default function TeraSyncPlatform() {
                       Teklehaymanot Market (Shop #42)
                     </span>
                   </h2>
-                  <p className="text-xs text-slate-400">Specialty: Engine Management Sensors &amp; Electricals &bull; Verified Merchant</p>
+                  <p className="text-xs text-[#B5BAC0]">Specialty: Engine Management Sensors &amp; Electricals &bull; Verified Merchant</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <span className="text-[10px] text-slate-400">Available Payout Balance</span>
+                  <span className="text-[10px] text-[#B5BAC0]">Available Payout Balance</span>
                   <div className="text-sm font-bold text-emerald-400">42,650.00 ETB</div>
                 </div>
                 <button
                   onClick={() => setCurrentRole("landing")}
-                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 text-xs"
+                  className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -1770,9 +2714,9 @@ export default function TeraSyncPlatform() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white">Live Requests Matching Your Inventory</h3>
-                  <p className="text-xs text-slate-400">Bids are sealed and invisible to rival shops</p>
+                  <p className="text-xs text-[#B5BAC0]">Bids are sealed and invisible to rival shops</p>
                 </div>
-                <button className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                <button className="text-xs text-[#B5BAC0] hover:text-white flex items-center gap-1">
                   <RefreshCw className="w-3.5 h-3.5" />
                   Refresh
                 </button>
@@ -1782,10 +2726,10 @@ export default function TeraSyncPlatform() {
                 {rfqList.map((req) => (
                   <div
                     key={req.id}
-                    className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                    className="p-5 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] hover:border-[#4A4F55] transition flex flex-col lg:flex-row lg:items-center justify-between gap-4"
                   >
                     <div className="flex items-start gap-4">
-                      <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-slate-800 bg-black">
+                      <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-[#3A3F45] bg-black">
                         <img
                           src={req.image}
                           alt={req.part}
@@ -1795,16 +2739,16 @@ export default function TeraSyncPlatform() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-mono font-bold text-blue-400">{req.id}</span>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-semibold">
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#1E2024] text-[#D0D4DA] border border-[#4A4F55] font-semibold">
                             {req.urgency === "CRITICAL_SAME_DAY" ? "⚡ Critical (Same Day)" : "Standard (24h)"}
                           </span>
-                          <span className="text-xs text-slate-500">&bull; {req.timeAgo}</span>
+                          <span className="text-xs text-[#8A8F96]">&bull; {req.timeAgo}</span>
                         </div>
                         <h4 className="text-base font-bold text-white">{req.part}</h4>
-                        <p className="text-xs text-slate-400">
-                          Vehicle: <strong className="text-slate-200">{req.vehicle}</strong> | Plate:{" "}
-                          <strong className="text-slate-200">{req.plate}</strong> | Market:{" "}
-                          <strong className="text-slate-200">{req.market}</strong>
+                        <p className="text-xs text-[#B5BAC0]">
+                          Vehicle: <strong className="text-[#F5F5F5]">{req.vehicle}</strong> | Plate:{" "}
+                          <strong className="text-[#F5F5F5]">{req.plate}</strong> | Market:{" "}
+                          <strong className="text-[#F5F5F5]">{req.market}</strong>
                         </p>
                       </div>
                     </div>
@@ -1813,7 +2757,7 @@ export default function TeraSyncPlatform() {
                       <input
                         type="number"
                         placeholder="Price in ETB"
-                        className="w-36 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        className="w-36 bg-[#050506] border border-[#3A3F45] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
                       />
                       <button
                         onClick={() => alert(`Sealed quote submitted with shelf photo verification for ${req.id}!`)}
@@ -1828,81 +2772,90 @@ export default function TeraSyncPlatform() {
               </div>
             </div>
           </div>
+          </ProtectedPortalGuard>
         )}
 
         {/* =========================================================================
             5. COURIER / RIDER DISPATCH WORKSPACE
         ========================================================================= */}
         {currentRole === "courier" && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-amber-950/30 border border-amber-900/60">
+          <ProtectedPortalGuard
+            portalName="Courier Delivery Desk"
+            requiredRole="rider"
+            allowedRoles={["rider"]}
+            currentUser={currentUser}
+            onLoginPrompt={openAuth}
+            onReturnHome={() => setCurrentRole("landing")}
+          >
+            <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#D93A10]/10 border border-amber-900/60">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-600/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-amber-600/20 border border-[#D93A10]/50 text-[#FF6A3D] flex items-center justify-center">
                   <Bike className="w-5 h-5" />
                 </div>
                 <div>
                   <h2 className="text-base font-bold text-white flex items-center gap-2">
                     Abebe Kebede (Motorcycle #ET-3-48921)
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#D93A10]/15 text-[#FF6A3D] border border-[#D93A10]/50">
                       ON_DUTY
                     </span>
                   </h2>
-                  <p className="text-xs text-slate-400">Delivery Dispatch &bull; Active Job in Progress</p>
+                  <p className="text-xs text-[#B5BAC0]">Delivery Dispatch &bull; Active Job in Progress</p>
                 </div>
               </div>
 
               <button
                 onClick={() => setCurrentRole("landing")}
-                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 text-xs self-start sm:self-auto"
+                className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs self-start sm:self-auto"
               >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
 
             {/* Active Delivery Job */}
-            <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+            <div className="p-6 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] space-y-6">
+              <div className="flex items-center justify-between border-b border-[#3A3F45] pb-4">
                 <div>
-                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                  <span className="text-xs font-bold text-[#FF6A3D] uppercase tracking-wider">
                     Current Assigned Delivery
                   </span>
                   <h3 className="text-lg font-bold text-white mt-1">Order #TR-2026-0081</h3>
-                  <p className="text-xs text-slate-400">Toyota Hilux 1KD Alternator Assembly (80A Denso)</p>
+                  <p className="text-xs text-[#B5BAC0]">Toyota Hilux 1KD Alternator Assembly (80A Denso)</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-xs text-slate-400">Delivery Payout</span>
-                  <div className="text-lg font-black text-amber-400">350.00 ETB</div>
+                  <span className="text-xs text-[#B5BAC0]">Delivery Payout</span>
+                  <div className="text-lg font-black text-[#FF6A3D]">350.00 ETB</div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                <div className="p-4 rounded-xl bg-[#050506]/90 border border-[#3A3F45] space-y-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#D0D4DA]">
                     <span className="flex items-center gap-1.5">
                       <Store className="w-4 h-4 text-emerald-400" />
                       1. Pickup: Alpha Spares (Teklehaymanot)
                     </span>
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   </div>
-                  <div className="text-xs text-slate-400">
-                    Tamper Seal Attached: <strong className="text-amber-400 font-mono">#TS-8942</strong>
+                  <div className="text-xs text-[#B5BAC0]">
+                    Tamper Seal Attached: <strong className="text-[#FF6A3D] font-mono">#TS-8942</strong>
                   </div>
-                  <div className="text-[11px] text-slate-500">
+                  <div className="text-[11px] text-[#8A8F96]">
                     Bag photo verified on server at 11:24 AM.
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                <div className="p-4 rounded-xl bg-[#050506]/90 border border-[#3A3F45] space-y-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#D0D4DA]">
                     <span className="flex items-center gap-1.5">
                       <Wrench className="w-4 h-4 text-blue-400" />
                       2. Destination: Tadesse Garage (Bole)
                     </span>
-                    <span className="text-amber-400 text-[10px] font-mono uppercase bg-amber-950/50 px-2 py-0.5 rounded border border-amber-900">
+                    <span className="text-[#FF6A3D] text-[10px] font-mono uppercase bg-[#D93A10]/10 px-2 py-0.5 rounded border border-amber-900">
                       Pending PIN
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-[#B5BAC0]">
                     Ask the garage mechanic for their 4-digit PIN after they physically test fitment.
                   </p>
 
@@ -1913,7 +2866,7 @@ export default function TeraSyncPlatform() {
                       value={pinInput}
                       onChange={(e) => setPinInput(e.target.value)}
                       placeholder="Enter 4-Digit PIN"
-                      className="w-36 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest text-white focus:outline-none focus:border-amber-500"
+                      className="w-36 bg-[#0F1012] border border-[#4A4F55] rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest text-white focus:outline-none focus:border-[#D93A10]"
                     />
                     <button
                       onClick={() => {
@@ -1939,13 +2892,22 @@ export default function TeraSyncPlatform() {
               </div>
             </div>
           </div>
+          </ProtectedPortalGuard>
         )}
 
         {/* =========================================================================
             6. ADMIN / OPERATIONS CLASSIFIED DESK
         ========================================================================= */}
         {currentRole === "admin" && (
-          <div className="space-y-6">
+          <ProtectedPortalGuard
+            portalName="Central Operations Desk"
+            requiredRole="admin"
+            allowedRoles={["admin"]}
+            currentUser={currentUser}
+            onLoginPrompt={openAuth}
+            onReturnHome={() => setCurrentRole("landing")}
+          >
+            <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-purple-950/30 border border-purple-900/60">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 text-purple-400 flex items-center justify-center">
@@ -1955,95 +2917,450 @@ export default function TeraSyncPlatform() {
                   <h2 className="text-base font-bold text-white flex items-center gap-2">
                     TeraSync Central Operations &amp; Dispute Desk
                   </h2>
-                  <p className="text-xs text-slate-400">Escrow Custody &amp; Cryptographic Audit Chain</p>
+                  <p className="text-xs text-[#B5BAC0]">Escrow Custody &amp; Cryptographic Audit Chain</p>
                 </div>
               </div>
 
               <button
                 onClick={() => setCurrentRole("landing")}
-                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 text-xs self-start sm:self-auto"
+                className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs self-start sm:self-auto"
               >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800">
-                <div className="text-xs text-slate-400">Active Escrow Balance</div>
+              <div className="p-5 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45]">
+                <div className="text-xs text-[#B5BAC0]">Active Escrow Balance</div>
                 <div className="text-2xl font-black text-emerald-400 mt-1">428,500.00 ETB</div>
-                <div className="text-[10px] text-slate-500 mt-1">Held across 28 live orders</div>
+                <div className="text-[10px] text-[#8A8F96] mt-1">Held across 28 live orders</div>
               </div>
 
-              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800">
-                <div className="text-xs text-slate-400">Platform Commission (5%)</div>
+              <div className="p-5 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45]">
+                <div className="text-xs text-[#B5BAC0]">Platform Commission (5%)</div>
                 <div className="text-2xl font-black text-blue-400 mt-1">21,425.00 ETB</div>
-                <div className="text-[10px] text-slate-500 mt-1">Earned this cycle</div>
+                <div className="text-[10px] text-[#8A8F96] mt-1">Earned this cycle</div>
               </div>
 
-              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800">
-                <div className="text-xs text-slate-400">Active Dispute Cases</div>
-                <div className="text-2xl font-black text-amber-400 mt-1">1 Case</div>
-                <div className="text-[10px] text-slate-500 mt-1">Requires manual arbitration</div>
+              <div className="p-5 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45]">
+                <div className="text-xs text-[#B5BAC0]">Active Dispute Cases</div>
+                <div className="text-2xl font-black text-[#FF6A3D] mt-1">1 Case</div>
+                <div className="text-[10px] text-[#8A8F96] mt-1">Requires manual arbitration</div>
               </div>
             </div>
 
-            <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-400" />
-                  <h3 className="text-sm font-bold text-white">Dispute Case #DSP-104</h3>
-                  <span className="text-[10px] font-mono bg-amber-950/60 text-amber-400 px-2 py-0.5 rounded border border-amber-800">
-                    NO_FAULT_FITMENT
+            {/* Admin Sub-Tabs */}
+            <div className="flex items-center gap-2 border-b border-[#3A3F45] pb-2">
+              <button
+                onClick={() => setAdminSubTab("applications")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                  adminSubTab === "applications"
+                    ? "bg-[#D93A10] text-white shadow-md shadow-orange-500/20"
+                    : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
+                }`}
+              >
+                <span>Merchant &amp; Rider Applications</span>
+                <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
+                  {pendingApplications.filter((a) => a.status === "PENDING").length} Pending
+                </span>
+              </button>
+
+              <button
+                onClick={() => setAdminSubTab("disputes")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                  adminSubTab === "disputes"
+                    ? "bg-[#D93A10] text-white shadow-md shadow-orange-500/20"
+                    : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
+                }`}
+              >
+                <span>Dispute Arbitration</span>
+                <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
+                  1 Case
+                </span>
+              </button>
+            </div>
+
+            {/* Sub-tab 1: Applications Queue */}
+            {adminSubTab === "applications" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Merchant &amp; Courier Onboarding Applications</h3>
+                    <p className="text-xs text-[#B5BAC0]">Verify business licenses, TIN numbers, IDs, and payout credentials before activating accounts</p>
+                  </div>
+                  <span className="text-xs text-[#B5BAC0] font-mono">
+                    Total: {pendingApplications.length}
                   </span>
                 </div>
-                <span className="text-xs text-slate-500">Opened 2h ago</span>
-              </div>
 
-              <p className="text-xs text-slate-300 leading-relaxed">
-                <strong>Reason:</strong> Mechanic states the alternator mounting ear offset differs by 3mm from
-                chassis spec. Seal code was verified intact; part returned to Teklehaymanot vendor without damage.
-              </p>
+                <div className="space-y-4">
+                  {pendingApplications.map((app) => {
+                    const isShop = app.role === "shop";
+                    const prof = app.profile;
+                    return (
+                      <div
+                        key={app.id}
+                        className={`p-6 rounded-2xl bg-[#0F1012]/95 border transition space-y-4 ${
+                          app.status === "PENDING"
+                            ? "border-amber-500/50 hover:border-amber-500"
+                            : app.status === "APPROVED"
+                            ? "border-emerald-500/40"
+                            : "border-red-500/40 opacity-75"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#3A3F45] pb-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base ${
+                                isShop
+                                  ? "bg-blue-600/20 text-blue-400 border border-blue-500/40"
+                                  : "bg-emerald-600/20 text-emerald-400 border border-emerald-500/40"
+                              }`}
+                            >
+                              {isShop ? <Store className="w-5 h-5" /> : <Bike className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs text-blue-400 font-bold">{app.id}</span>
+                                <span
+                                  className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                                    isShop
+                                      ? "bg-blue-500/10 text-blue-300 border border-blue-500/30"
+                                      : "bg-emerald-500/10 text-emerald-300 border border-emerald-500/30"
+                                  }`}
+                                >
+                                  {isShop ? "Shop Owner" : "Delivery Rider"}
+                                </span>
+                                <span className="text-xs text-[#8A8F96]">&bull; {app.submittedAt}</span>
+                              </div>
+                              <h4 className="text-base font-bold text-white mt-0.5">
+                                {isShop
+                                  ? String(prof.shopName || "Unnamed Shop")
+                                  : `${String(prof.vehicleType || "Vehicle")} (${String(prof.plate || "No Plate")})`}
+                              </h4>
+                            </div>
+                          </div>
 
-              <div className="flex flex-wrap items-center gap-3 pt-2">
-                <button
-                  onClick={() => alert("Full item refund released to buyer. Courier fees deducted.")}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition"
-                >
-                  Rule: No Fault (Refund Item to Buyer)
-                </button>
-                <button
-                  onClick={() => alert("Vendor fault registered. Full item + delivery refunded to buyer.")}
-                  className="px-4 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-white text-xs font-bold transition"
-                >
-                  Rule: Vendor Fault (100% Refund)
-                </button>
-                <button
-                  onClick={() => alert("Admin requested uploaded photo verification.")}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition border border-slate-700"
-                >
-                  Request Photos
-                </button>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider font-mono ${
+                                app.status === "PENDING"
+                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                                  : app.status === "APPROVED"
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                                  : "bg-red-500/10 text-red-400 border border-red-500/30"
+                              }`}
+                            >
+                              {app.status === "PENDING" ? "⏳ Under Review" : app.status === "APPROVED" ? "✅ Approved & Live" : "❌ Rejected"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Details grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                          <div className="p-3 rounded-xl bg-[#050506] border border-[#3A3F45] space-y-1">
+                            <span className="text-[#8A8F96] uppercase text-[10px] font-semibold block">Contact &amp; Location</span>
+                            <div className="text-[#F5F5F5]">Phone: <strong className="font-mono">{app.phone}</strong></div>
+                            {isShop ? (
+                              <>
+                                <div className="text-[#B5BAC0]">Market: <strong>{String(prof.market || "Teklehaymanot")}</strong></div>
+                                <div className="text-[#B5BAC0] truncate">Address: {String(prof.street || "Addis Ababa")}</div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="text-[#B5BAC0]">Coverage: <strong>{Array.isArray(prof.areas) ? prof.areas.join(", ") : "Addis Ababa"}</strong></div>
+                                <div className="text-[#B5BAC0]">Plate: <strong className="font-mono">{String(prof.plate || "")}</strong></div>
+                              </>
+                            )}
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-[#050506] border border-[#3A3F45] space-y-1">
+                            <span className="text-[#8A8F96] uppercase text-[10px] font-semibold block">Official Credentials</span>
+                            {isShop ? (
+                              <>
+                                <div className="text-[#B5BAC0]">TIN: <strong className="font-mono text-[#F5F5F5]">{String(prof.tin || "Pending")}</strong></div>
+                                <div className="text-[#B5BAC0]">License: <strong className="font-mono text-[#F5F5F5]">{String(prof.licenseNum || "Pending")}</strong></div>
+                                <div className="text-[#8A8F96] text-[11px] truncate">Owner: {String(prof.ownerName || "")}</div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="text-[#B5BAC0]">National ID: <strong className="font-mono text-[#F5F5F5]">{String(prof.idNumber || "Pending")}</strong></div>
+                                <div className="text-[#B5BAC0]">Vehicle: {String(prof.vehicleType || "")}</div>
+                              </>
+                            )}
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-[#050506] border border-[#3A3F45] space-y-1">
+                            <span className="text-[#8A8F96] uppercase text-[10px] font-semibold block">Payout Escrow Settlement</span>
+                            {isShop ? (
+                              <>
+                                <div className="text-[#B5BAC0]">Bank: <strong className="text-[#F5F5F5]">{String(prof.bank || "CBE")}</strong></div>
+                                <div className="text-[#B5BAC0]">Account: <strong className="font-mono text-[#F5F5F5]">{String(prof.accountNumber || "—")}</strong></div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="text-[#B5BAC0]">Provider: <strong className="text-[#F5F5F5]">{String(prof.payoutService || "Telebirr")}</strong></div>
+                                <div className="text-[#B5BAC0]">Number: <strong className="font-mono text-[#F5F5F5]">{String(prof.payoutNumber || app.phone)}</strong></div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Photos preview if present */}
+                        {Boolean(prof.shopPhoto || prof.shelfPhoto || prof.idPhoto || prof.licensePhoto) && (
+                          <div className="flex items-center gap-3 pt-1">
+                            <span className="text-[11px] text-[#8A8F96]">Submitted Proof Photos:</span>
+                            {prof.shopPhoto ? (
+                              <img src={String(prof.shopPhoto)} alt="Shop" className="w-12 h-12 rounded-lg object-cover border border-[#3A3F45]" />
+                            ) : null}
+                            {prof.shelfPhoto ? (
+                              <img src={String(prof.shelfPhoto)} alt="Shelf" className="w-12 h-12 rounded-lg object-cover border border-[#3A3F45]" />
+                            ) : null}
+                            {prof.idPhoto ? (
+                              <img src={String(prof.idPhoto)} alt="ID" className="w-12 h-12 rounded-lg object-cover border border-[#3A3F45]" />
+                            ) : null}
+                            {prof.licensePhoto ? (
+                              <img src={String(prof.licensePhoto)} alt="License" className="w-12 h-12 rounded-lg object-cover border border-[#3A3F45]" />
+                            ) : null}
+                          </div>
+                        )}
+
+                        {/* Action buttons */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#3A3F45]">
+                          <div className="text-[11px] text-[#8A8F96]">
+                            {app.status === "PENDING"
+                              ? "Review credentials above. Approval makes this merchant/rider live in the marketplace."
+                              : app.status === "APPROVED"
+                              ? "Merchant/Rider is authorized and can receive orders & requests."
+                              : "Application rejected."}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {app.status === "PENDING" && (
+                              <>
+                                <button
+                                  onClick={() => handleRejectApp(app.id)}
+                                  className="px-4 py-2 rounded-xl bg-[#1E2024] hover:bg-[#2A2E33] text-[#D0D4DA] text-xs font-semibold border border-[#3A3F45] transition"
+                                >
+                                  Reject
+                                </button>
+                                <button
+                                  onClick={() => handleApproveApp(app.id)}
+                                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
+                                >
+                                  <Check className="w-4 h-4" />
+                                  Approve &amp; Activate Live
+                                </button>
+                              </>
+                            )}
+
+                            {app.status === "APPROVED" && (
+                              <button
+                                onClick={() => {
+                                  setCurrentUser(prof);
+                                  setCurrentRole(isShop ? "vendor" : "courier");
+                                }}
+                                className="px-4 py-2 rounded-xl bg-[#1E2024] hover:bg-[#2A2E33] text-[#FF6A3D] text-xs font-bold border border-[#4A4F55] transition flex items-center gap-1.5"
+                              >
+                                Test Portal as {isShop ? "Merchant" : "Rider"} &rarr;
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Sub-tab 2: Disputes */}
+            {adminSubTab === "disputes" && (
+              <div className="p-6 rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-[#FF6A3D]" />
+                    <h3 className="text-sm font-bold text-white">Dispute Case #DSP-104</h3>
+                    <span className="text-[10px] font-mono bg-[#D93A10]/10 text-[#FF6A3D] px-2 py-0.5 rounded border border-amber-800">
+                      NO_FAULT_FITMENT
+                    </span>
+                  </div>
+                  <span className="text-xs text-[#8A8F96]">Opened 2h ago</span>
+                </div>
+
+                <p className="text-xs text-[#D0D4DA] leading-relaxed">
+                  <strong>Reason:</strong> Mechanic states the alternator mounting ear offset differs by 3mm from
+                  chassis spec. Seal code was verified intact; part returned to Teklehaymanot vendor without damage.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <button
+                    onClick={() => alert("Full item refund released to buyer. Courier fees deducted.")}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition"
+                  >
+                    Rule: No Fault (Refund Item to Buyer)
+                  </button>
+                  <button
+                    onClick={() => alert("Vendor fault registered. Full item + delivery refunded to buyer.")}
+                    className="px-4 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-white text-xs font-bold transition"
+                  >
+                    Rule: Vendor Fault (100% Refund)
+                  </button>
+                  <button
+                    onClick={() => alert("Admin requested uploaded photo verification.")}
+                    className="px-4 py-2 rounded-xl bg-[#1E2024] hover:bg-[#2A2E33] text-[#D0D4DA] text-xs font-bold transition border border-[#4A4F55]"
+                  >
+                    Request Photos
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+          </ProtectedPortalGuard>
         )}
       </main>
 
-      {/* System Footer */}
-      <footer className="border-t border-slate-800/80 bg-[#070b14] py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div>TeraSync &copy; 2026. Automotive Systems &amp; Single Spare Parts Clearinghouse.</div>
-          <div className="flex gap-3 text-slate-400 font-medium">
-            <span>Teklehaymanot</span>
-            <span>&bull;</span>
-            <span>Kera</span>
-            <span>&bull;</span>
-            <span>Somali Tera</span>
-            <span>&bull;</span>
-            <span>Akaki</span>
+      {/* Thin-Line Footer */}
+      <footer className="border-t border-[#3A3F45] bg-[#050506] pt-12 pb-16 sm:pb-8 text-[#B5BAC0] text-xs space-y-8 font-light">
+        <div className="max-w-[1216px] mx-auto px-4 sm:px-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 pb-10">
+            <div className="col-span-2 md:col-span-1 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-[#D93A10] flex items-center justify-center font-bold text-white text-xs">
+                  ⚡
+                </div>
+                <span className="font-bold text-base text-[#F5F5F5] tracking-tight">TeraSync</span>
+              </div>
+              <p className="leading-relaxed text-xs">
+                Trusted automotive spare parts clearinghouse &amp; reverse-RFQ escrow platform. Addis Ababa, Ethiopia.
+              </p>
+              <div className="pt-1 flex items-center gap-2 text-[11px] text-[#FF6A3D]">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Protected by Telebirr &amp; Chapa Escrow</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#F5F5F5] text-xs uppercase tracking-wider">Catalog &amp; Portals</h4>
+              <ul className="space-y-1.5">
+                <li><button onClick={() => setCurrentRole("market")} className="hover:text-[#F5F5F5] transition">Exploded Systems</button></li>
+                <li><button onClick={() => setCurrentRole("buyer")} className="hover:text-[#F5F5F5] transition">Garage Workbench</button></li>
+                <li><button onClick={() => setCurrentRole("vendor")} className="hover:text-[#F5F5F5] transition">Merchant Console</button></li>
+                <li><button onClick={() => setCurrentRole("courier")} className="hover:text-[#F5F5F5] transition">Courier Handshake</button></li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#F5F5F5] text-xs uppercase tracking-wider">Addis Ababa Hubs</h4>
+              <ul className="space-y-1.5">
+                <li>Teklehaymanot Parts Market</li>
+                <li>Kera Commercial Cluster</li>
+                <li>Somali Tera Electrical Corridor</li>
+                <li>Akaki Industrial Spare Zone</li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#F5F5F5] text-xs uppercase tracking-wider">Escrow Security</h4>
+              <ul className="space-y-1.5">
+                <li>Cryptographic 4-Digit PIN</li>
+                <li>Numbered Tamper-Evident Seals</li>
+                <li>Live Shelf Proof Verification</li>
+                <li>Admin Dispute Resolution</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-[#3A3F45]/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-[#B5BAC0]/80">
+            <div>
+              &copy; 2026 TeraSync Technologies. All rights reserved. Addis Ababa, Ethiopia.
+            </div>
+            <div className="flex items-center gap-4">
+              <span>Privacy Policy</span>
+              <span>&bull;</span>
+              <span>Escrow Terms</span>
+              <span>&bull;</span>
+              <span>Merchant Standards</span>
+            </div>
           </div>
         </div>
       </footer>
+
+      {/* Mobile Sticky Bottom Tab Bar (360px Optimized) */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0F1012]/95 backdrop-blur-md border-t border-[#3A3F45] py-2 px-6 flex justify-between items-center text-[10px]">
+        <button
+          onClick={() => setCurrentRole("landing")}
+          className={`flex flex-col items-center gap-1 transition min-h-[44px] justify-center ${
+            currentRole === "landing" ? "text-[#FF6A3D]" : "text-[#B5BAC0]"
+          }`}
+        >
+          <Zap className="w-4 h-4" />
+          <span>Home</span>
+        </button>
+
+        <button
+          onClick={() => setCurrentRole("market")}
+          className={`flex flex-col items-center gap-1 transition min-h-[44px] justify-center ${
+            currentRole === "market" ? "text-[#FF6A3D]" : "text-[#B5BAC0]"
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>Categories</span>
+        </button>
+
+        <button
+          onClick={() => setCurrentRole("buyer")}
+          className={`flex flex-col items-center gap-1 relative transition min-h-[44px] justify-center ${
+            currentRole === "buyer" ? "text-[#FF6A3D]" : "text-[#B5BAC0]"
+          }`}
+        >
+          <Wrench className="w-4 h-4" />
+          <span>My Requests</span>
+          <span className="absolute -top-1 -right-1 px-1 py-0.2 rounded-full bg-[#D93A10] text-white text-[9px] font-bold">
+            {rfqList.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => {
+            if (!currentUser) {
+              openAuth(null);
+            } else {
+              setCurrentRole(
+                currentUser.role === "customer"
+                  ? "buyer"
+                  : currentUser.role === "shop"
+                  ? "vendor"
+                  : currentUser.role === "rider"
+                  ? "courier"
+                  : "admin"
+              );
+            }
+          }}
+          className={`flex flex-col items-center gap-1 transition min-h-[44px] justify-center ${
+            currentRole === "vendor" || (currentUser && currentRole === (currentUser.role === "customer" ? "buyer" : currentUser.role === "shop" ? "vendor" : currentUser.role === "rider" ? "courier" : "admin"))
+              ? "text-[#FF6A3D]"
+              : "text-[#B5BAC0]"
+          }`}
+        >
+          <Store className="w-4 h-4" />
+          <span>{currentUser ? "Portal" : "Log in"}</span>
+        </button>
+      </div>
+
+      {/* Auth & Onboarding Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        initialRole={authTargetRole}
+        onClose={() => {
+          setAuthModalOpen(false);
+          setAuthTargetRole(null);
+        }}
+        onAuthComplete={handleAuthComplete}
+        onPendingReview={handlePendingReview}
+        knownPhones={knownPhones}
+        onPhoneUsed={handlePhoneUsed}
+      />
     </div>
   );
 }
