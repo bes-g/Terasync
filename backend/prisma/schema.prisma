@@ -1,0 +1,90 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  BUYER
+  VENDOR
+  COURIER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING_APPROVAL
+  SUSPENDED
+}
+
+enum AuthCodePurpose {
+  VERIFY_EMAIL
+  LOGIN
+  RESET_PASSWORD
+}
+
+model User {
+  id               String       @id @default(uuid())
+  email            String       @unique
+  passwordHash     String
+  fullName         String
+  role             Role         @default(BUYER)
+  status           UserStatus   @default(ACTIVE)
+  phoneNumber      String?
+  emailVerifiedAt  DateTime?
+  failedLoginCount Int          @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  trustedDevices   TrustedDevice[]
+  refreshTokens    RefreshToken[]
+
+  @@map("users")
+}
+
+model AuthCode {
+  id         String          @id @default(uuid())
+  email      String
+  purpose    AuthCodePurpose
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int             @default(0)
+  consumedAt DateTime?
+  ip         String?
+  createdAt  DateTime        @default(now())
+
+  @@index([email, purpose])
+  @@map("auth_codes")
+}
+
+model TrustedDevice {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("trusted_devices")
+}
+
+model RefreshToken {
+  id                 String    @id @default(uuid())
+  userId             String
+  tokenHash          String    @unique
+  expiresAt          DateTime
+  revokedAt          DateTime?
+  replacedByTokenId  String?
+  createdAt          DateTime  @default(now())
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}

@@ -1,9 +1,13 @@
 import express, { type Express } from "express";
 import helmet from "helmet";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import { pinoHttp } from "pino-http";
 import { logger } from "./lib/logger.js";
 import { errorHandler } from "./middlewares/error-handler.js";
+import { authRouter } from "./modules/auth/auth.routes.js";
+import { authController } from "./modules/auth/auth.controller.js";
+import { authenticateJwt } from "./modules/auth/auth.middleware.js";
 
 export function createApp(): Express {
   const app = express();
@@ -11,8 +15,16 @@ export function createApp(): Express {
   // Security headers
   app.use(helmet());
 
-  // CORS allow-list (open for development/api access)
-  app.use(cors());
+  // CORS allow-list (open for development/api access with credentials for cookies)
+  app.use(
+    cors({
+      origin: true,
+      credentials: true,
+    }),
+  );
+
+  // Cookie parser for trusted device token
+  app.use(cookieParser());
 
   // HTTP request logging
   app.use(
@@ -69,6 +81,12 @@ export function createApp(): Express {
   app.get("/health", (_req, res) => {
     res.status(200).json({ status: "ok" });
   });
+
+  // Authentication endpoints
+  app.use("/auth", authRouter);
+
+  // Direct /me endpoint
+  app.get("/me", authenticateJwt, (req, res, next) => authController.getMe(req, res, next));
 
   // Central error handler
   app.use(errorHandler);

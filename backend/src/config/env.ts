@@ -32,6 +32,27 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
   PIN_HMAC_SECRET: z.string().min(32, "PIN_HMAC_SECRET must be at least 32 characters"),
+
+  // Email Configuration
+  EMAIL_PROVIDER: z.enum(["smtp", "console"]).default("console"),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 587)),
+  SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((val) => val === "true"),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  EMAIL_FROM_NAME: z.string().default("TeraSync"),
+  EMAIL_FROM_ADDRESS: z.string().default("no-reply@terasync.et"),
+
+  // Initial Admin Credentials (for seed script)
+  ADMIN_EMAIL: z.string().email().default("besufkadtekalign@gmail.com"),
+  ADMIN_PASSWORD: z.string().min(8).default("April_7b"),
+  ADMIN_NAME: z.string().default("Besufkad Tekalign"),
 });
 
 export type Env = z.infer<typeof envSchema>;
