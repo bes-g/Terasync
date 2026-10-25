@@ -39,6 +39,8 @@ interface PendingApp {
   };
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
@@ -129,7 +131,7 @@ export default function AdminPage() {
 
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:4000/auth/login", {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -170,7 +172,7 @@ export default function AdminPage() {
 
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:4000/auth/login/verify", {
+      const res = await fetch(`${API_BASE}/auth/login/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
