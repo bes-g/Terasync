@@ -36,6 +36,8 @@ export class SmtpEmailProvider implements EmailProvider {
 
   async sendEmail(options: SendEmailOptions): Promise<void> {
     const from = `"${env.EMAIL_FROM_NAME}" <${env.EMAIL_FROM_ADDRESS}>`;
+
+    // 1. Try direct SMTP first (works locally and on non-firewalled environments)
     try {
       await this.transporter.sendMail({
         from,
@@ -44,10 +46,43 @@ export class SmtpEmailProvider implements EmailProvider {
         text: options.text,
         html: options.html,
       });
-      logger.info({ to: options.to, subject: options.subject }, "Email sent successfully via SMTP");
-    } catch (error) {
-      logger.error({ err: error, to: options.to }, "Failed to send email via SMTP");
-      throw error;
+      logger.info({ to: options.to, subject: options.subject }, "Email sent successfully via direct SMTP");
+      return;
+    } catch (directError: any) {
+      logger.warn(
+        { err: directError.message, to: options.to },
+        "Direct SMTP connection failed or blocked. Attempting HTTPS dispatcher fallback."
+      );
+    }
+
+    // 2. HTTPS Dispatcher Fallback via Vercel (100% bypasses cloud SMTP port blocking)
+    const dispatcherUrl = process.env.EMAIL_DISPATCHER_URL || "https://terasync-pi.vercel.app/api/send-email";
+    const internalSecret = process.env.INTERNAL_EMAIL_SECRET || "terasync_internal_dispatch_secret_2026";
+
+    try {
+      const res = await fetch(dispatcherUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": internalSecret,
+        },
+        body: JSON.stringify({
+          to: options.to,
+          subject: options.subject,
+          html: options.html,
+          text: options.text,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData: any = await res.json().catch(() => ({}));
+        throw new Error(errorData?.error || `Dispatcher responded with status ${res.status}`);
+      }
+
+      logger.info({ to: options.to, subject: options.subject }, "Email delivered successfully via HTTPS dispatcher");
+    } catch (dispatcherError: any) {
+      logger.error({ err: dispatcherError, to: options.to }, "Failed to send email via both direct SMTP and HTTPS dispatcher");
+      throw dispatcherError;
     }
   }
 
