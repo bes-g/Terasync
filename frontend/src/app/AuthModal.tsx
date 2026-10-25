@@ -197,10 +197,7 @@ export default function AuthModal({
       setFormError("Password must be at least 8 characters long");
       return;
     }
-    if (authMode === "signup" && !fullName.trim()) {
-      setFormError("Please enter your full name");
-      return;
-    }
+    const effectiveName = fullName.trim() || cleanEmail.split("@")[0];
 
     setLoading(true);
     try {
@@ -211,7 +208,7 @@ export default function AuthModal({
           body: JSON.stringify({
             email: cleanEmail,
             password,
-            fullName: fullName.trim(),
+            fullName: effectiveName,
             role: getBackendRole(role!),
           }),
         });

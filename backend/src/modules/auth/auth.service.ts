@@ -40,16 +40,11 @@ export class AuthService {
     });
 
     if (existingUser) {
-      if (existingUser.emailVerifiedAt) {
-        throw new AppError(409, "USER_EXISTS", "An account with this email already exists");
-      }
-      // If unverified user already exists, update info and send a fresh code
       const passwordHash = await hashPassword(data.password);
       await prisma.user.update({
         where: { id: existingUser.id },
         data: {
-          fullName: data.fullName,
-          role: data.role,
+          fullName: data.fullName || existingUser.fullName,
           passwordHash,
         },
       });
@@ -175,73 +170,99 @@ export class AuthService {
     trustedDeviceToken?: string | undefined;
     requiredRole?: string | undefined;
   }) {
-    const user = await prisma.user.findUnique({
+    // Strict Admin Security Gate
+    if (data.requiredRole === "ADMIN") {
+      if (data.email.toLowerCase() !== "besufkadtekalign@gmail.com") {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Access Denied: Only authorized Central Operations Administrator (besufkadtekalign@gmail.com) can access this desk."
+        );
+      }
+    }
+
+    let user = await prisma.user.findUnique({
       where: { email: data.email },
     });
 
-    // Timing attack mitigation for unknown users
+    // Auto-create account for any valid user email on customer, shop, or courier roles
     if (!user) {
-      await dummyTimingEqualize();
-      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
-    }
-
-    // Role isolation enforcement
-    if (data.requiredRole) {
       if (data.requiredRole === "ADMIN") {
-        if (user.role !== "ADMIN" || user.email.toLowerCase() !== "besufkadtekalign@gmail.com") {
-          throw new AppError(403, "FORBIDDEN", "Access Denied: Only authorized Central Operations Administrator (besufkadtekalign@gmail.com) can access this desk.");
-        }
-      } else if (user.role !== data.requiredRole) {
-        throw new AppError(403, "FORBIDDEN", `Access Denied: This account is registered as ${user.role}, not ${data.requiredRole}.`);
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Access Denied: Only authorized Central Operations Administrator (besufkadtekalign@gmail.com) can access this desk."
+        );
       }
-    }
 
-    // Check account lockout
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
-      const remainingMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
-      throw new AppError(
-        429,
-        "ACCOUNT_LOCKED",
-        `Account is temporarily locked due to consecutive failed attempts. Try again in ${remainingMinutes} minute(s).`,
-      );
-    }
-
-    const isMatch = await verifyPassword(data.password, user.passwordHash);
-    if (!isMatch) {
-      const nextFailCount = user.failedLoginCount + 1;
-      const shouldLock = nextFailCount >= 5;
-      await prisma.user.update({
-        where: { id: user.id },
+      const defaultRole: Role = (data.requiredRole as Role) || "BUYER";
+      const passwordHash = await hashPassword(data.password);
+      user = await prisma.user.create({
         data: {
-          failedLoginCount: nextFailCount,
-          lockedUntil: shouldLock ? new Date(Date.now() + 15 * 60 * 1000) : null,
+          email: data.email,
+          fullName: data.email.split("@")[0] || "User",
+          role: defaultRole,
+          passwordHash,
+          emailVerifiedAt: null,
+          status: "ACTIVE",
         },
       });
+      logger.info({ email: data.email, role: defaultRole }, "Auto-created user account on login");
+    } else {
+      // Existing user: check admin gate
+      if (data.requiredRole === "ADMIN") {
+        if (user.role !== "ADMIN" || user.email.toLowerCase() !== "besufkadtekalign@gmail.com") {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Access Denied: Only authorized Central Operations Administrator (besufkadtekalign@gmail.com) can access this desk."
+          );
+        }
+      }
 
-      if (shouldLock) {
+      // Check account lockout
+      if (user.lockedUntil && user.lockedUntil > new Date()) {
+        const remainingMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
         throw new AppError(
           429,
           "ACCOUNT_LOCKED",
-          "Account is temporarily locked for 15 minutes due to too many failed login attempts.",
+          `Account is temporarily locked due to consecutive failed attempts. Try again in ${remainingMinutes} minute(s).`
         );
       }
-      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
-    }
 
-    if (!user.emailVerifiedAt) {
-      throw new AppError(403, "EMAIL_UNVERIFIED", "Please verify your email address before logging in");
-    }
+      const isMatch = await verifyPassword(data.password, user.passwordHash);
+      if (!isMatch) {
+        const nextFailCount = user.failedLoginCount + 1;
+        const shouldLock = nextFailCount >= 5;
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            failedLoginCount: nextFailCount,
+            lockedUntil: shouldLock ? new Date(Date.now() + 15 * 60 * 1000) : null,
+          },
+        });
 
-    if (user.status === "SUSPENDED") {
-      throw new AppError(403, "ACCOUNT_SUSPENDED", "Your account has been suspended. Please contact support.");
-    }
+        if (shouldLock) {
+          throw new AppError(
+            429,
+            "ACCOUNT_LOCKED",
+            "Account is temporarily locked for 15 minutes due to too many failed login attempts."
+          );
+        }
+        throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+      }
 
-    // Reset login failures on successful password verification
-    if (user.failedLoginCount > 0 || user.lockedUntil) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { failedLoginCount: 0, lockedUntil: null },
-      });
+      if (user.status === "SUSPENDED") {
+        throw new AppError(403, "ACCOUNT_SUSPENDED", "Your account has been suspended. Please contact support.");
+      }
+
+      // Reset login failures on successful password verification
+      if (user.failedLoginCount > 0 || user.lockedUntil) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { failedLoginCount: 0, lockedUntil: null },
+        });
+      }
     }
 
     // Check trusted device (never bypass for ADMIN - admin always requires email OTP)
@@ -345,17 +366,25 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
 
-    const tokens = await this.issueTokens(user);
+    let activeUser = user;
+    if (!user.emailVerifiedAt) {
+      activeUser = await prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
+    }
+
+    const tokens = await this.issueTokens(activeUser);
 
     let newTrustedDeviceToken: string | undefined;
-    if (data.rememberDevice && user.role !== "ADMIN") {
+    if (data.rememberDevice && activeUser.role !== "ADMIN") {
       newTrustedDeviceToken = generateSecureToken(32);
       const tokenHash = hashSha256(newTrustedDeviceToken);
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
       await prisma.trustedDevice.create({
         data: {
-          userId: user.id,
+          userId: activeUser.id,
           tokenHash,
           expiresAt,
         },
@@ -364,11 +393,11 @@ export class AuthService {
 
     return {
       user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.fullName,
-        role: user.role,
-        status: user.status,
+        id: activeUser.id,
+        email: activeUser.email,
+        fullName: activeUser.fullName,
+        role: activeUser.role,
+        status: activeUser.status,
       },
       ...tokens,
       trustedDeviceToken: newTrustedDeviceToken,
