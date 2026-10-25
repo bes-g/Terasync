@@ -2,9 +2,11 @@
 
 ### A trusted reverse-RFQ marketplace for automotive and industrial spare parts in Addis Ababa
 
-TeraSync helps mechanics, vehicle owners, fleet managers, and industrial technicians find the right spare part without spending hours visiting multiple markets. A buyer describes the part they need, verified vendors compete with sealed offers, and the selected order is protected by escrow-style payment, delivery evidence, physical inspection, and a secure PIN hand-off.
+> 🌐 **Hosted platform:** [https://terasync-pi.vercel.app](https://terasync-pi.vercel.app)
 
-> **Graduation project:** TeraSync is being developed as a practical marketplace prototype for the Ethiopian spare-parts market. The repository combines a domain-focused TypeScript backend foundation, a visual catalog, and detailed product and business specifications for the MVP.
+TeraSync helps mechanics, vehicle owners, fleet managers, and industrial technicians find the right spare part without spending hours visiting multiple markets. A buyer describes the part they need, relevant vendors submit competitive offers, and the buyer can compare the available options before ordering.
+
+> **Graduation project:** TeraSync is being developed as a practical marketplace prototype for the Ethiopian spare-parts market. The repository combines a domain-focused TypeScript backend foundation, a planned vehicle-first storefront, and trust-focused marketplace workflows.
 
 ## Why TeraSync?
 
