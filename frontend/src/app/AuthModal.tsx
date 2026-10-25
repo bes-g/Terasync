@@ -184,8 +184,8 @@ export default function AuthModal({
       setFormError("Please enter a valid email address");
       return;
     }
-    if (password.length < 10) {
-      setFormError("Password must be at least 10 characters long");
+    if (password.length < 8) {
+      setFormError("Password must be at least 8 characters long");
       return;
     }
     if (authMode === "signup" && !fullName.trim()) {
@@ -340,13 +340,16 @@ export default function AuthModal({
         }
 
         const isAdmin = data.user.role === "ADMIN" || role === "admin";
-        const assignedRole: AuthRole = isAdmin ? "admin" : (role || "customer");
+        const isShop = data.user.role === "VENDOR" || role === "shop";
+        const assignedRole: AuthRole = isAdmin ? "admin" : isShop ? "shop" : (role || "customer");
         const profile: AuthProfile = {
           role: assignedRole,
           email: data.user.email,
           fullName: data.user.fullName,
-          firstName: data.user.fullName?.split(" ")[0] || (isAdmin ? "Admin" : "User"),
+          firstName: data.user.fullName?.split(" ")[0] || (isAdmin ? "Admin" : isShop ? "Merchant" : "User"),
           phone: data.user.phoneNumber || "0911000000",
+          shopName: data.user.shopName || (isShop ? (data.user.fullName ? `${data.user.fullName}'s Auto Spares` : "Alpha Auto Spares") : undefined),
+          market: data.user.market || (isShop ? "Teklehaymanot" : undefined),
           clearanceLevel: isAdmin ? "TIER_3_OPERATIONS" : undefined,
         };
 
@@ -644,12 +647,12 @@ export default function AuthModal({
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Min 10 characters (letter + number)"
+                      placeholder="Min 8 characters (letter + number)"
                       className="flex-1 bg-transparent text-sm text-[#F5F5F5] placeholder-[#B5BAC0]/40 outline-none"
                     />
                   </div>
                   {authMode === "signup" && (
-                    <p className="text-[11px] text-[#B5BAC0] mt-1">Must be at least 10 characters with numbers and letters.</p>
+                    <p className="text-[11px] text-[#B5BAC0] mt-1">Must be at least 8 characters with numbers and letters.</p>
                   )}
                 </div>
 

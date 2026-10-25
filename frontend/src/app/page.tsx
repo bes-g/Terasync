@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Wrench,
   Store,
@@ -194,6 +194,8 @@ interface GarageJobCard {
   assignedTech: string;
   status: "DIAGNOSING" | "PARTS_DISPATCHED" | "IN_TRANSIT" | "INSTALLING" | "READY_FOR_PICKUP";
   requiredPartIds: string[];
+  bayPhoto?: string;
+  photoCaption?: string;
 }
 
 const GARAGE_JOB_CARDS: GarageJobCard[] = [
@@ -208,6 +210,8 @@ const GARAGE_JOB_CARDS: GarageJobCard[] = [
     assignedTech: "Master Tech Girma",
     status: "PARTS_DISPATCHED",
     requiredPartIds: ["RAD-HIACE-COPPER", "TOY-CLUTCH-KIT", "TOY-GLOW-5L"],
+    bayPhoto: "/images/mechanic-underhood-inspection.jpg",
+    photoCaption: "Master Tech Girma &bull; Under-Hood 5L Mechanical Diesel Inspection",
   },
   {
     id: "JC-4092",
@@ -220,6 +224,8 @@ const GARAGE_JOB_CARDS: GarageJobCard[] = [
     assignedTech: "Diesel Tech Dawit",
     status: "IN_TRANSIT",
     requiredPartIds: ["EMS-INJECTOR", "TURBO-ACT-1KD"],
+    bayPhoto: "/images/garage-workshop-bay.jpg",
+    photoCaption: "Hilux 1KD Common Rail lifted in Bay 2 for turbocharger inspection",
   },
   {
     id: "JC-4093",
@@ -244,22 +250,23 @@ const GARAGE_JOB_CARDS: GarageJobCard[] = [
     assignedTech: "EV Tech Yonas (High-Voltage Certified)",
     status: "DIAGNOSING",
     requiredPartIds: ["BYD-PORT-GBT", "BYD-COOLANT-PUMP"],
+    bayPhoto: "/images/ev-highvoltage-technician.jpg",
+    photoCaption: "EV Tech Yonas &bull; High-Voltage Insulated Safety Gloves Servicing Inverter",
   },
 ];
 
 const POPULAR_GARAGE_DTCS = [
-  { code: "ALL", label: "All Faults & Maintenance" },
-  { code: "P0087", label: "⚡ P0087 (Low Fuel Rail Pressure)" },
-  { code: "P0300", label: "⚡ P0300/P0301 (Engine Misfire)" },
-  { code: "P0100", label: "⚡ P0100 (MAF Sensor Fault)" },
-  { code: "C1201", label: "⚡ C1201/C0200 (ABS Light)" },
-  { code: "P0400", label: "⚡ P0400 (EGR Flow Malfunction)" },
-  { code: "P1A02", label: "⚡ P1A02 (EV Charging System)" },
+  { code: "P0087", label: "P0087 Low fuel rail pressure" },
+  { code: "P0300", label: "P0300 Engine misfire" },
+  { code: "P0100", label: "P0100 MAF sensor fault" },
+  { code: "C1201", label: "C1201 ABS light" },
+  { code: "P0400", label: "P0400 EGR flow" },
+  { code: "MORE", label: "More codes" },
 ];
 
 const VEHICLE_GARAGE_OPTIONS = [
-  { id: "ALL", label: "All Vehicles (Addis Ababa Fleet)" },
-  { id: "TOYOTA_HIACE", label: "Toyota HiAce Minibus Taxi (5L Diesel)" },
+  { id: "ALL", label: "All vehicles (Addis fleet)" },
+  { id: "TOYOTA_HIACE", label: "Toyota HiAce 5L" },
   { id: "HILUX", label: "Toyota Hilux / Fortuner (1KD/2KD D-4D)" },
   { id: "LAND_CRUISER", label: "Toyota Land Cruiser HZJ79 / Prado (1HZ/1KD)" },
   { id: "COROLLA_VITZ", label: "Toyota Corolla / Vitz / Yaris (1NZ/1ZR)" },
@@ -364,13 +371,25 @@ export default function TeraSyncPlatform() {
   const [marketViewMode, setMarketViewMode] = useState<"systems" | "grid">("systems");
   const [selectedSystemId, setSelectedSystemId] = useState<"ems" | "braking" | "charging" | "schematic">("ems");
   const [selectedSubcategory, setSelectedSubcategory] = useState<string>("ALL");
-  const [selectedDtc, setSelectedDtc] = useState<string>("ALL");
+  const [selectedDtc, setSelectedDtc] = useState<string>("P0087");
 
   // Interactive filters
   const [selectedVehicle, setSelectedVehicle] = useState<string>("ALL");
   const [selectedVoltage, setSelectedVoltage] = useState<string>("ALL");
   const [selectedMarketHub, setSelectedMarketHub] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Dynamic Catalog Pagination Limit (Load More Parts)
+  const [visiblePartsLimit, setVisiblePartsLimit] = useState<number>(4);
+  const [isLoadingMoreParts, setIsLoadingMoreParts] = useState<boolean>(false);
+
+  const handleLoadMoreParts = () => {
+    setIsLoadingMoreParts(true);
+    setTimeout(() => {
+      setVisiblePartsLimit((prev) => prev + 4);
+      setIsLoadingMoreParts(false);
+    }, 300);
+  };
 
   // Build Bundle for System Assembly
   const [buildBundle, setBuildBundle] = useState<SinglePartItem[]>([]);
@@ -464,6 +483,17 @@ export default function TeraSyncPlatform() {
   const [pinRevealed, setPinRevealed] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [pinVerified, setPinVerified] = useState(false);
+  const [deliverySettlementStatus, setDeliverySettlementStatus] = useState<"IN_TRANSIT" | "ARRIVED_VERIFIED" | "SETTLED">("IN_TRANSIT");
+  const [shopBalance, setShopBalance] = useState<number>(42650);
+  const [courierBalance, setCourierBalance] = useState<number>(350);
+  const [airPayoutTx, setAirPayoutTx] = useState<{
+    shopTx: string;
+    courierTx: string;
+    shopAmount: number;
+    courierAmount: number;
+    platformFee: number;
+    timestamp: string;
+  } | null>(null);
 
   // Auth & Onboarding state
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -484,7 +514,7 @@ export default function TeraSyncPlatform() {
   const [knownPhones, setKnownPhones] = useState<Set<string>>(
     () => new Set(["0911223344", "0922334455", "0911554433", "0922776655"])
   );
-  const [adminSubTab, setAdminSubTab] = useState<"applications" | "disputes">("applications");
+  const [adminSubTab, setAdminSubTab] = useState<"settlements" | "applications" | "disputes">("settlements");
   const [pendingApplications, setPendingApplications] = useState<
     Array<{
       id: string;
@@ -534,6 +564,65 @@ export default function TeraSyncPlatform() {
     },
   ]);
 
+  // Dynamic list of available shops & hubs for catalog filtering
+  const allAvailableShops = useMemo(() => {
+    const shopsMap = new Map<string, { id: string; name: string; hub: string; isCurrentUser?: boolean }>();
+
+    // 1. If current logged-in user is a shop, ensure they are at the top!
+    if (currentUser && (currentUser.role === "shop" || currentUser.shopName)) {
+      const sName = currentUser.shopName || currentUser.fullName || "My Verified Shop";
+      const sHub = currentUser.market || "Teklehaymanot";
+      shopsMap.set(sName, {
+        id: `SHOP-${sName}`,
+        name: sName,
+        hub: sHub,
+        isCurrentUser: true,
+      });
+    }
+
+    // 2. Include all active shops with inventory in shopPosts
+    shopPosts.forEach((post) => {
+      if (post.shopName && !shopsMap.has(post.shopName)) {
+        const hub = post.marketLocation.split(" (")[0] || "Teklehaymanot";
+        shopsMap.set(post.shopName, {
+          id: `SHOP-${post.shopName}`,
+          name: post.shopName,
+          hub: hub,
+        });
+      }
+    });
+
+    // 3. Include any registered shops from pending/approved applications
+    pendingApplications.forEach((app) => {
+      if (app.role === "shop" && app.profile.shopName && !shopsMap.has(app.profile.shopName)) {
+        shopsMap.set(app.profile.shopName, {
+          id: `SHOP-${app.profile.shopName}`,
+          name: app.profile.shopName,
+          hub: app.profile.market || "Teklehaymanot",
+        });
+      }
+    });
+
+    // 4. Default verified network merchants if not already present
+    const defaultShops = [
+      { name: "Alpha Auto Spares", hub: "Teklehaymanot" },
+      { name: "Bole Genuine Starters & Alternators", hub: "Teklehaymanot" },
+      { name: "Somali Tera ECU & Ignition Tech", hub: "Somali Tera" },
+      { name: "Kera Heavy Truck Parts Hub", hub: "Kera" },
+    ];
+    defaultShops.forEach((ds) => {
+      if (!shopsMap.has(ds.name)) {
+        shopsMap.set(ds.name, {
+          id: `SHOP-${ds.name}`,
+          name: ds.name,
+          hub: ds.hub,
+        });
+      }
+    });
+
+    return Array.from(shopsMap.values());
+  }, [currentUser, shopPosts, pendingApplications]);
+
   const handlePhoneUsed = (phone: string) => {
     setKnownPhones((prev) => new Set([...Array.from(prev), phone]));
   };
@@ -561,7 +650,10 @@ export default function TeraSyncPlatform() {
       setTimeout(() => setRfqSuccessToast(null), 8000);
     } else if (role === "shop") {
       setCurrentRole("vendor");
-      setRfqSuccessToast(`Logged in to Merchant Console (${String(profile.shopName || "Alpha Auto Spares")})`);
+      if (profile.shopName) {
+        setSelectedMarketHub(`SHOP:${profile.shopName}`);
+      }
+      setRfqSuccessToast(`Logged in as verified merchant (${String(profile.shopName || "Alpha Auto Spares")}). Your shop option is now active in the catalog!`);
       setTimeout(() => setRfqSuccessToast(null), 8000);
     } else if (role === "rider") {
       setCurrentRole("courier");
@@ -584,6 +676,12 @@ export default function TeraSyncPlatform() {
       profile,
     };
     setPendingApplications((prev) => [newApp, ...prev]);
+    if (role === "shop") {
+      setCurrentUser(profile);
+      if (profile.shopName) {
+        setSelectedMarketHub(`SHOP:${profile.shopName}`);
+      }
+    }
   };
 
   const handleApproveApp = (appId: string) => {
@@ -680,6 +778,46 @@ export default function TeraSyncPlatform() {
   // Active Selected System
   const activeSystem = AUTOMOTIVE_SYSTEMS.find((s) => s.id === selectedSystemId) || AUTOMOTIVE_SYSTEMS[0];
 
+  // Helper to match part by selected market hub or specific shop
+  const isPartMatchingHubOrShop = (
+    partMarketHub: string,
+    partCategory: string,
+    partCompVehicles: string[],
+    partName?: string
+  ) => {
+    if (selectedMarketHub === "ALL") return true;
+    if (selectedMarketHub.startsWith("SHOP:")) {
+      const targetShop = selectedMarketHub.replace("SHOP:", "");
+      const foundShop = allAvailableShops.find((s) => s.name.toLowerCase() === targetShop.toLowerCase());
+      const shopHub = foundShop?.hub?.toLowerCase();
+
+      // Check if this shop posted an item matching this part category, compatibility, or title
+      const hasSpecificShopPost = shopPosts.some(
+        (sp) =>
+          sp.shopName.toLowerCase() === targetShop.toLowerCase() &&
+          (sp.category.toLowerCase().includes(partCategory.toLowerCase()) ||
+            (partName &&
+              (sp.title.toLowerCase().includes(partName.toLowerCase()) ||
+                partName.toLowerCase().includes(sp.title.toLowerCase()))) ||
+            partCompVehicles.some((v) => sp.compatibility.toLowerCase().includes(v.toLowerCase())))
+      );
+      if (hasSpecificShopPost) return true;
+
+      // Match if the shop's market location corresponds to this part's market hub
+      if (shopHub && (partMarketHub.toLowerCase().includes(shopHub) || shopHub.includes(partMarketHub.toLowerCase()))) {
+        return true;
+      }
+
+      // Fallback for new general shops without specific hub restrictions
+      if (!shopHub || shopHub === "all" || shopHub === "addis ababa") {
+        return true;
+      }
+
+      return false;
+    }
+    return partMarketHub.toLowerCase() === selectedMarketHub.toLowerCase();
+  };
+
   // Filter single parts within the active system
   const filteredParts = activeSystem.singleParts.filter((part) => {
     if (selectedSubcategory !== "ALL" && part.systemSubcategory !== selectedSubcategory) {
@@ -691,10 +829,10 @@ export default function TeraSyncPlatform() {
     if (selectedVoltage !== "ALL" && part.voltage !== selectedVoltage) {
       return false;
     }
-    if (selectedMarketHub !== "ALL" && part.marketHub !== selectedMarketHub) {
+    if (!isPartMatchingHubOrShop(part.marketHub, part.systemSubcategory, part.compatibleVehicles, part.name)) {
       return false;
     }
-    if (selectedDtc !== "ALL") {
+    if (selectedDtc !== "ALL" && selectedDtc !== "P0087" && selectedDtc !== "MORE") {
       const matchDtc = part.dtcCodes && part.dtcCodes.some((c) => c.toLowerCase().includes(selectedDtc.toLowerCase()));
       if (!matchDtc) return false;
     }
@@ -722,7 +860,7 @@ export default function TeraSyncPlatform() {
     if (selectedVoltage !== "ALL" && part.voltage !== selectedVoltage) {
       return false;
     }
-    if (selectedMarketHub !== "ALL" && part.marketHub !== selectedMarketHub) {
+    if (!isPartMatchingHubOrShop(part.marketHub, part.systemSubcategory, part.compatibleVehicles, part.name)) {
       return false;
     }
     if (selectedDtc !== "ALL") {
@@ -1828,12 +1966,16 @@ export default function TeraSyncPlatform() {
 
                 {/* Right side: dark photo blended into the red */}
                 <div className="lg:col-span-5 relative flex items-center justify-center">
-                  <div className="relative w-full h-[280px] sm:h-[360px] lg:h-[420px] rounded-2xl overflow-hidden">
+                  <div className="relative w-full h-[280px] sm:h-[360px] lg:h-[420px] rounded-2xl overflow-hidden shadow-2xl border border-[#6A4A44]/50 group">
                     <img
-                      src="/images/vendor-warehouse.jpg"
-                      alt="Verified Ethiopian Merchant Shelves"
-                      className="w-full h-full object-cover mix-blend-lighten [mask-image:radial-gradient(circle_at_center,black_50%,transparent_92%)] filter contrast-125"
+                      src="/images/mechanic-underhood-inspection.jpg"
+                      alt="Verified Ethiopian Mechanic Physical Fitment Inspection"
+                      className="w-full h-full object-cover mix-blend-lighten [mask-image:radial-gradient(circle_at_center,black_55%,transparent_95%)] filter contrast-125 group-hover:scale-105 transition-transform duration-500"
                     />
+                    <div className="absolute bottom-3 left-3 right-3 bg-black/75 backdrop-blur-md p-3 rounded-xl border border-white/10 text-left">
+                      <span className="text-[10px] text-[#FF6A3D] font-mono uppercase font-bold block">Physical Fitment Inspection</span>
+                      <p className="text-xs text-white font-medium">Addis Ababa mechanics test bolt patterns &amp; wiring at workshop bays before releasing PIN</p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1948,566 +2090,566 @@ export default function TeraSyncPlatform() {
         )}
 
         {/* =========================================================================
-            2. AUTOMOTIVE SYSTEMS & SINGLE PARTS BREAKDOWN (IMAGE-GROUNDED)
+            2. AUTOMOTIVE SYSTEMS & SINGLE PARTS BREAKDOWN (IMAGE-GROUNDED EXACT MATCH)
         ========================================================================= */}
         {currentRole === "market" && (
           <div className="space-y-6">
-            {/* Top Toolbar: Vehicle Selector, Search & View Mode Switcher */}
-            <div className="p-6 rounded-3xl bg-[#0F1012] border border-[#D93A10]/50 shadow-2xl space-y-6">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#D93A10]/15 text-[#FF6A3D] text-[11px] font-bold border border-[#D93A10]/50 mb-2">
-                    <Zap className="w-3 h-3 fill-current" />
-                    Automotive Systems &amp; Single Component Breakdown
-                  </div>
-                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                    {marketViewMode === "systems" ? activeSystem.name : "Spare Parts Catalog & Feed"}
-                  </h2>
-                  <p className="text-xs text-[#B5BAC0]">
-                    {marketViewMode === "systems"
-                      ? "Select and inspect the single parts required to construct or repair this system. Add parts to your build bundle or request immediate quotes."
-                      : "Search and filter all single automotive parts across Ethiopian fleet models."}
-                  </p>
-                </div>
-
-                {/* View Switcher Pill */}
-                <div className="flex items-center gap-2 bg-[#050506] p-1.5 rounded-2xl border border-[#3A3F45]">
-                  <button
-                    onClick={() => setMarketViewMode("systems")}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                      marketViewMode === "systems"
-                        ? "bg-amber-500 text-slate-950 shadow"
-                        : "text-[#B5BAC0] hover:text-white"
-                    }`}
+            {/* The Outer Slate-Blue Border Container matching Image 1 */}
+            <div className="p-4 sm:p-6 lg:p-8 rounded-3xl bg-[#0B0C0E] border border-[#1E293B] shadow-2xl space-y-6">
+              {/* Row 1: Breadcrumb (left) & Actions (right) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                {/* Breadcrumbs */}
+                <div className="flex items-center gap-2 text-xs font-normal text-zinc-400 flex-wrap">
+                  <span
+                    className="hover:text-white cursor-pointer transition"
+                    onClick={() => setCurrentRole("landing")}
                   >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>Exploded System View</span>
-                  </button>
-                  <button
-                    onClick={() => setMarketViewMode("grid")}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                      marketViewMode === "grid"
-                        ? "bg-amber-500 text-slate-950 shadow"
-                        : "text-[#B5BAC0] hover:text-white"
-                    }`}
-                  >
-                    <PackageCheck className="w-3.5 h-3.5" />
-                    <span>All Parts Grid</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Vehicle Garage Fitment & Search Filters */}
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-2">
-                <div className="md:col-span-5 relative">
-                  <Search className="w-4 h-4 text-[#B5BAC0] absolute left-3.5 top-3.5" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search single part (e.g. MAP sensor, ABS module, 1KD ECU, MAF)..."
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#050506] border border-[#3A3F45] text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#D93A10]"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-3 top-3 text-[#B5BAC0] hover:text-white"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
+                    Storefront
+                  </span>
+                  <span className="text-zinc-600">/</span>
+                  <span className="text-zinc-400">Toyota</span>
+                  <span className="text-zinc-600">/</span>
+                  <span className="text-zinc-400 truncate max-w-[180px] sm:max-w-none">
+                    {selectedVehicle === "ALL" ? "All vehicles" : VEHICLE_GARAGE_OPTIONS.find((v) => v.id === selectedVehicle)?.label || "All vehicles"}
+                  </span>
                 </div>
 
-                <div className="md:col-span-4 bg-[#050506] rounded-xl px-3 py-2 border border-[#3A3F45] flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-[#FF6A3D] shrink-0" />
-                  <div className="flex-1">
+                {/* Right controls: Vehicle Dropdown + Systems/All parts Switcher */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Vehicle dropdown pill */}
+                  <div className="relative">
                     <select
                       value={selectedVehicle}
                       onChange={(e) => setSelectedVehicle(e.target.value)}
-                      className="w-full bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                      className="appearance-none bg-[#050506] border border-[#2A2E35] rounded-full px-4 py-1.5 pr-8 text-xs font-medium text-white focus:outline-none cursor-pointer hover:border-zinc-500 transition max-w-[200px] truncate"
                     >
                       {VEHICLE_GARAGE_OPTIONS.map((opt) => (
-                        <option key={opt.id} value={opt.id} className="bg-[#0F1012] text-white">
+                        <option key={opt.id} value={opt.id} className="bg-[#0B0C0E] text-white">
                           {opt.label}
                         </option>
                       ))}
                     </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
-                </div>
 
-                <div className="md:col-span-3 flex items-center bg-[#050506] rounded-xl p-1 border border-[#3A3F45]">
-                  <select
-                    value={selectedMarketHub}
-                    onChange={(e) => setSelectedMarketHub(e.target.value)}
-                    className="w-full bg-transparent px-2 py-1.5 text-xs font-semibold text-[#D0D4DA] focus:outline-none cursor-pointer"
-                  >
-                    <option value="ALL" className="bg-[#0F1012] text-white">All Market Hubs</option>
-                    <option value="Teklehaymanot" className="bg-[#0F1012] text-white">Teklehaymanot (New OEM)</option>
-                    <option value="Kera" className="bg-[#0F1012] text-white">Kera (Truck &amp; Engines)</option>
-                    <option value="Somali Tera" className="bg-[#0F1012] text-white">Somali Tera (Scrap Cuts)</option>
-                  </select>
+                  {/* Segmented Systems / All parts Pill */}
+                  <div className="flex items-center bg-[#050506] p-1 rounded-full border border-[#2A2E35]">
+                    <button
+                      onClick={() => setMarketViewMode("systems")}
+                      className={`px-3.5 py-1 rounded-full text-xs font-bold transition ${
+                        marketViewMode === "systems"
+                          ? "bg-[#D93A10] text-white shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      Systems
+                    </button>
+                    <button
+                      onClick={() => setMarketViewMode("grid")}
+                      className={`px-3.5 py-1 rounded-full text-xs font-medium transition ${
+                        marketViewMode === "grid"
+                          ? "bg-[#D93A10] text-white shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      All parts
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* OBD-II Fault Code & Diagnostic Troubleshooting Filter */}
-              <div className="border-t border-[#3A3F45] pt-3 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[#B5BAC0] flex items-center gap-1.5 font-bold uppercase tracking-wider text-[11px]">
-                    <AlertTriangle className="w-3.5 h-3.5 text-[#FF6A3D]" />
-                    OBD-II Diagnostic Trouble Code (DTC) Quick Filter:
-                  </span>
-                  {selectedDtc !== "ALL" && (
+              {/* Row 2: Title & Subtitle */}
+              <div>
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight">
+                  Parts for {selectedVehicle === "ALL" ? "All Vehicles" : VEHICLE_GARAGE_OPTIONS.find((v) => v.id === selectedVehicle)?.label || "All Vehicles"}
+                </h1>
+                <p className="text-xs sm:text-sm text-zinc-400 mt-1.5 font-light">
+                  Tap a part, and verified shops send you private offers.
+                </p>
+              </div>
+
+              {/* Row 3: Single-Line Search & Hub Bar */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
+                <div className="relative flex-1 w-full">
+                  <Search className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search a part, OEM number or fault code, for example P0087"
+                    className="w-full pl-11 pr-9 py-2.5 rounded-full bg-[#050506] border border-[#2A2E35] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#D93A10] transition"
+                  />
+                  {searchQuery && (
                     <button
-                      onClick={() => setSelectedDtc("ALL")}
-                      className="text-[11px] text-[#FF6A3D] hover:underline flex items-center gap-1 font-semibold"
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
                     >
-                      ✕ Reset DTC Filter
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
-                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                  {POPULAR_GARAGE_DTCS.map((dtc) => (
-                    <button
-                      key={dtc.code}
-                      onClick={() => setSelectedDtc(dtc.code)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 ${
-                        selectedDtc === dtc.code
-                          ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
-                          : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
-                      }`}
+
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  {/* All market hubs dropdown pill */}
+                  <div className="relative flex-1 sm:flex-initial">
+                    <select
+                      value={selectedMarketHub}
+                      onChange={(e) => setSelectedMarketHub(e.target.value)}
+                      className="w-full appearance-none bg-[#050506] border border-[#2A2E35] rounded-full px-4 py-2.5 pr-8 text-xs font-medium text-zinc-300 focus:outline-none cursor-pointer hover:border-zinc-500 transition max-w-full sm:max-w-[240px] truncate"
                     >
-                      {dtc.label}
+                      <option value="ALL" className="bg-[#0B0C0E] text-white">
+                        All market hubs &amp; shops
+                      </option>
+
+                      {/* Logged in shop option prominently at the top */}
+                      {currentUser && (currentUser.role === "shop" || currentUser.shopName) && (
+                        <optgroup label="Your Logged-In Shop" className="bg-[#0B0C0E] text-[#FF6A3D] font-bold">
+                          <option
+                            value={`SHOP:${currentUser.shopName || "My Shop"}`}
+                            className="bg-[#0B0C0E] text-amber-400 font-bold"
+                          >
+                            ★ {currentUser.shopName || "My Shop"} ({currentUser.market || "Your Shop"})
+                          </option>
+                        </optgroup>
+                      )}
+
+                      {/* Market Hubs */}
+                      <optgroup label="Market Hubs" className="bg-[#0B0C0E] text-zinc-400 font-semibold">
+                        <option value="Teklehaymanot" className="bg-[#0B0C0E] text-white">Teklehaymanot Hub</option>
+                        <option value="Kera" className="bg-[#0B0C0E] text-white">Kera Hub</option>
+                        <option value="Somali Tera" className="bg-[#0B0C0E] text-white">Somali Tera Hub</option>
+                        <option value="Merkato" className="bg-[#0B0C0E] text-white">Merkato Hub</option>
+                        <option value="Bole" className="bg-[#0B0C0E] text-white">Bole Hub</option>
+                      </optgroup>
+
+                      {/* Verified Registered Shops across platform */}
+                      {allAvailableShops.length > 0 && (
+                        <optgroup label="Verified Registered Shops" className="bg-[#0B0C0E] text-zinc-400 font-semibold">
+                          {allAvailableShops
+                            .filter(
+                              (shop) =>
+                                !currentUser?.shopName ||
+                                shop.name.toLowerCase() !== currentUser.shopName.toLowerCase()
+                            )
+                            .map((shop) => (
+                              <option
+                                key={shop.id || shop.name}
+                                value={`SHOP:${shop.name}`}
+                                className="bg-[#0B0C0E] text-white"
+                              >
+                                {shop.name} ({shop.hub})
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+
+                  {/* Most requested pill */}
+                  <div className="relative shrink-0">
+                    <button className="bg-[#050506] border border-[#2A2E35] rounded-full px-4 py-2.5 text-xs font-medium text-zinc-300 flex items-center gap-2 hover:border-zinc-500 transition">
+                      <span>Most requested</span>
+                      <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
                     </button>
-                  ))}
+                  </div>
                 </div>
               </div>
 
-              {/* System Architecture Selector Tabs (when in Exploded System View) */}
-              {marketViewMode === "systems" && (
-                <div className="border-t border-[#3A3F45] pt-4 space-y-3">
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                    {AUTOMOTIVE_SYSTEMS.map((sys) => (
-                      <button
+              {/* Row 4: BROWSE BY SYSTEM Section */}
+              <div className="space-y-2.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+                    BROWSE BY SYSTEM
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        const sysOrder = ["ems", "braking", "schematic", "charging"] as const;
+                        const currIdx = sysOrder.indexOf(selectedSystemId as any);
+                        const prevIdx = currIdx <= 0 ? sysOrder.length - 1 : currIdx - 1;
+                        setSelectedSystemId(sysOrder[prevIdx]);
+                        setSelectedSubcategory("ALL");
+                      }}
+                      className="w-7 h-7 rounded-full bg-[#050506] border border-[#2A2E35] text-zinc-400 hover:text-white hover:border-zinc-500 flex items-center justify-center text-xs transition"
+                      aria-label="Previous system"
+                    >
+                      &larr;
+                    </button>
+                    <button
+                      onClick={() => {
+                        const sysOrder = ["ems", "braking", "schematic", "charging"] as const;
+                        const currIdx = sysOrder.indexOf(selectedSystemId as any);
+                        const nextIdx = (currIdx + 1) % sysOrder.length;
+                        setSelectedSystemId(sysOrder[nextIdx]);
+                        setSelectedSubcategory("ALL");
+                      }}
+                      className="w-7 h-7 rounded-full bg-[#050506] border border-[#2A2E35] text-zinc-400 hover:text-white hover:border-zinc-500 flex items-center justify-center text-xs transition"
+                      aria-label="Next system"
+                    >
+                      &rarr;
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                  {AUTOMOTIVE_SYSTEMS.map((sys) => {
+                    const isSelected = selectedSystemId === sys.id;
+                    return (
+                      <div
                         key={sys.id}
                         onClick={() => {
                           setSelectedSystemId(sys.id as any);
                           setSelectedSubcategory("ALL");
                         }}
-                        className={`px-4 py-2.5 rounded-xl text-xs font-bold shrink-0 flex items-center gap-2 transition ${
-                          selectedSystemId === sys.id
-                            ? "bg-[#D93A10] text-slate-950 shadow-lg shadow-orange-500/20 font-black"
-                            : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
+                        className={`rounded-2xl p-4 flex items-center gap-3.5 cursor-pointer transition-all duration-200 ${
+                          isSelected
+                            ? "bg-[#D93A10] text-white shadow-lg shadow-orange-950/40 border border-[#D93A10]"
+                            : "bg-[#0B0C0E] border border-[#2A2E35] hover:border-zinc-500 text-white"
                         }`}
                       >
-                        <span>{sys.id === "ems" ? "🧠" : sys.id === "braking" ? "🛑" : "🚗"}</span>
-                        <span>{sys.name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${selectedSystemId === sys.id ? "bg-[#050506]/90 text-slate-950" : "bg-[#0F1012] text-[#B5BAC0]"}`}>
-                          {sys.totalPartsCount}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Subcategory Pills */}
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                    <button
-                      onClick={() => setSelectedSubcategory("ALL")}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition ${
-                        selectedSubcategory === "ALL"
-                          ? "bg-blue-600 text-white"
-                          : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
-                      }`}
-                    >
-                      All Components ({activeSystem.singleParts.length})
-                    </button>
-                    {activeSystem.subcategories.map((subcat) => (
-                      <button
-                        key={subcat}
-                        onClick={() => setSelectedSubcategory(subcat)}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition ${
-                          selectedSubcategory === subcat
-                            ? "bg-blue-600 text-white"
-                            : "bg-[#050506] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
-                        }`}
-                      >
-                        {subcat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Build Bundle Drawer Floating Bar */}
-            {buildBundle.length > 0 && (
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-900/90 via-slate-900 to-indigo-950/90 border-2 border-blue-500 shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-500 text-white flex items-center justify-center font-bold">
-                    {buildBundle.length}
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">
-                      System Build Bundle Active ({buildBundle.length} Single Parts Selected)
-                    </h4>
-                    <p className="text-xs text-[#D0D4DA]">
-                      Estimated Package Total:{" "}
-                      <strong className="text-emerald-400">
-                        {buildBundle.reduce((sum, p) => sum + p.priceEstBirr, 0).toLocaleString()} ETB
-                      </strong>
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setBuildBundle([])}
-                    className="px-3 py-2 rounded-xl bg-[#1E2024] text-[#D0D4DA] text-xs font-semibold hover:bg-[#2A2E33]"
-                  >
-                    Clear Bundle
-                  </button>
-                  <button
-                    onClick={handleBroadcastBundleRfq}
-                    className="px-5 py-2 rounded-xl bg-[#D93A10] hover:bg-[#F04A1C] text-slate-950 text-xs font-black shadow-lg shadow-orange-500/30 transition flex items-center gap-1.5"
-                  >
-                    <Zap className="w-4 h-4 fill-current" />
-                    Broadcast Combined Build RFQ
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Exploded System View Layout (Image Diagram Showcase + Constituent Single Parts Grid) */}
-            {marketViewMode === "systems" && (
-              <div className="space-y-6">
-                {/* Visual Architecture Banner Card */}
-                <div className="relative rounded-3xl overflow-hidden border border-[#3A3F45] bg-[#0c1222] shadow-2xl">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 items-center">
-                    <div className="lg:col-span-5 space-y-4">
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-950/80 text-blue-300 border border-blue-800 text-[11px] font-bold">
-                        <Cpu className="w-3.5 h-3.5" />
-                        System Breakdown
-                      </div>
-                      <h3 className="text-2xl font-black text-white leading-tight">
-                        {activeSystem.name}
-                      </h3>
-                      <p className="text-xs text-[#D0D4DA] leading-relaxed">
-                        {activeSystem.description}
-                      </p>
-                      <div className="p-3.5 rounded-xl bg-[#050506]/90 border border-[#3A3F45] text-xs space-y-1">
-                        <div className="text-[10px] text-[#B5BAC0] uppercase tracking-wider font-bold">
-                          Central Hub &amp; Interface:
+                        <div
+                          className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+                            isSelected ? "border-2 border-white/70" : "border border-zinc-600"
+                          }`}
+                        >
+                          <div
+                            className={`w-3.5 h-3.5 rounded-full ${
+                              isSelected ? "bg-white/80" : "bg-transparent"
+                            }`}
+                          />
                         </div>
-                        <div className="font-bold text-[#FF6A3D]">{activeSystem.centralHub}</div>
-                      </div>
-                    </div>
-
-                    <div className="lg:col-span-7 flex flex-col items-center">
-                      <div className="relative w-full max-h-[380px] rounded-2xl overflow-hidden border border-[#3A3F45] bg-black flex items-center justify-center shadow-inner">
-                        <img
-                          src={activeSystem.diagramImage}
-                          alt={activeSystem.name}
-                          className="w-full h-full object-contain max-h-[380px]"
-                        />
-                      </div>
-                      <span className="text-[11px] text-[#B5BAC0] italic mt-2 text-center">
-                        {activeSystem.diagramCaption}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Single Constituent Parts Header */}
-                <div className="flex items-center justify-between text-xs text-[#B5BAC0] px-1">
-                  <div>
-                    Showing <strong className="text-white">{filteredParts.length}</strong> single constituent parts in{" "}
-                    <strong className="text-[#FF6A3D]">{activeSystem.name}</strong>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Fitment Checked for {selectedVehicle === "ALL" ? "All Fleet Models" : selectedVehicle}</span>
-                  </div>
-                </div>
-
-                {/* Single Constituent Parts Cards Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                  {filteredParts.map((part) => {
-                    const isSelectedInBundle = buildBundle.some((p) => p.id === part.id);
-                    return (
-                      <div
-                        key={part.id}
-                        className={`rounded-2xl border transition-all duration-300 flex flex-col justify-between overflow-hidden ${
-                          isSelectedInBundle
-                            ? "bg-blue-950/30 border-blue-500 shadow-lg shadow-blue-500/10"
-                            : "bg-[#0F1012]/95 border-[#3A3F45] hover:border-[#D93A10]/50"
-                        }`}
-                      >
-                        <div className="p-4 space-y-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#D93A10]/15 text-[#FF6A3D] border border-[#D93A10]/50">
-                              {part.systemSubcategory}
-                            </span>
-                            <span className="text-[10px] font-mono font-bold text-[#B5BAC0]">
-                              {part.voltage}
-                            </span>
-                          </div>
-
-                          {/* Component Visual Reference Image */}
-                          <div className="relative w-full h-44 rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] flex items-center justify-center p-2 group">
-                            <img
-                              src={part.image}
-                              alt={part.name}
-                              className="w-full h-full object-contain hover:scale-105 transition-transform duration-300"
-                            />
-                            <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/80 backdrop-blur-md text-[10px] font-mono text-[#FF6A3D] border border-[#4A4F55]">
-                              {part.sku}
-                            </span>
-                          </div>
-
-                          <div>
-                            {part.localAmharicName && (
-                              <div className="inline-block px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 text-[11px] font-bold border border-emerald-800/70 mb-1">
-                                {part.localAmharicName}
-                              </div>
-                            )}
-                            <h4 className="text-sm font-bold text-white leading-snug">
-                              {part.name}
-                            </h4>
-                          </div>
-
-                          {part.dtcCodes && part.dtcCodes.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span className="text-[10px] text-[#8A8F96] font-semibold">DTC:</span>
-                              {part.dtcCodes.map((code) => (
-                                <button
-                                  key={code}
-                                  onClick={() => setSelectedDtc(code.split("/")[0])}
-                                  className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/70 hover:bg-amber-800/50"
-                                >
-                                  {code}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="p-2.5 rounded-xl bg-[#050506] border border-[#3A3F45] text-[11px] space-y-1">
-                            <span className="text-[10px] uppercase font-bold text-[#B5BAC0]">Role in System:</span>
-                            <p className="text-[#D0D4DA] leading-relaxed text-[11px]">
-                              {part.role}
-                            </p>
-                          </div>
-
-                          {(part.laborTimeEst || part.difficulty) && (
-                            <div className="flex items-center justify-between text-[11px] py-1 px-2.5 rounded-lg bg-[#050506]/90 border border-[#3A3F45]">
-                              <span className="text-[#B5BAC0] flex items-center gap-1 font-mono">
-                                <Clock className="w-3 h-3 text-[#8A8F96]" />
-                                Labor: <strong className="text-[#F5F5F5]">{part.laborTimeEst || "45 mins"}</strong>
-                              </span>
-                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                                part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "bg-red-950/70 text-red-300 border border-red-800/60" :
-                                part.difficulty === "INTERMEDIATE" ? "bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/60" :
-                                "bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
-                              }`}>
-                                {part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "PRO GARAGE" :
-                                 part.difficulty === "INTERMEDIATE" ? "MODERATE" : "DIY FRIENDLY"}
-                              </span>
-                            </div>
-                          )}
-
-                          {part.garageInspectionTips && (
-                            <div className="p-2.5 rounded-xl bg-blue-950/30 border border-blue-900/50 text-[11px] space-y-1">
-                              <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1">
-                                <Wrench className="w-3 h-3" />
-                                Mechanic Diagnostic Tip:
-                              </div>
-                              <p className="text-blue-200/90 italic text-[11px] leading-relaxed">
-                                {part.garageInspectionTips}
-                              </p>
-                            </div>
-                          )}
-
-                          {part.toolsRequired && part.toolsRequired.length > 0 && (
-                            <div className="text-[11px] text-[#B5BAC0] flex items-start gap-1">
-                              <span className="text-[#8A8F96] font-semibold shrink-0">Tools:</span>
-                              <span className="text-[#D0D4DA]">{part.toolsRequired.join(", ")}</span>
-                            </div>
-                          )}
-
-                          <div className="space-y-1 text-[11px]">
-                            <div className="text-[#B5BAC0]">
-                              Brand: <strong className="text-[#F5F5F5]">{part.brand}</strong> ({part.conditionLabel})
-                            </div>
-                            <div className="text-[#B5BAC0] flex items-center gap-1">
-                              <MapPin className="w-3 h-3 text-[#8A8F96]" />
-                              {part.marketHub} &bull; {part.stockVendorsCount} Shops
-                            </div>
-                          </div>
-
-                          <div className="pt-2 flex items-baseline justify-between border-t border-[#3A3F45]">
-                            <div>
-                              <div className="text-base font-black text-white">
-                                {part.priceEstBirr.toLocaleString()} ETB
-                              </div>
-                              <div className="text-[10px] text-[#8A8F96] line-through">
-                                {part.originalPriceBirr.toLocaleString()} ETB
-                              </div>
-                            </div>
-                            <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/80">
-                              Verified Stock
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="p-4 pt-0 space-y-2 border-t border-[#3A3F45]">
-                          <button
-                            onClick={() => toggleBundlePart(part)}
-                            className={`w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                              isSelectedInBundle
-                                ? "bg-blue-600 text-white"
-                                : "bg-[#050506] hover:bg-[#1E2024] text-blue-400 border border-[#3A3F45]"
+                        <div className="min-w-0">
+                          <h4 className="text-[13px] font-bold leading-tight truncate">
+                            {sys.name}
+                          </h4>
+                          <p
+                            className={`text-[11px] font-normal mt-0.5 ${
+                              isSelected ? "text-white/80" : "text-zinc-400"
                             }`}
                           >
-                            <PackageCheck className="w-3.5 h-3.5" />
-                            {isSelectedInBundle ? "Selected in Build Bundle" : "+ Add to Build Bundle"}
-                          </button>
-
-                          <button
-                            onClick={() => setRfqModalPart(part)}
-                            className="w-full py-2 rounded-xl bg-[#D93A10] hover:bg-[#F04A1C] text-slate-950 text-xs font-black transition flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20"
-                          >
-                            <Zap className="w-3.5 h-3.5 fill-current" />
-                            Request Single Part Quote
-                          </button>
+                            {sys.totalPartsCount} components
+                          </p>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
-            )}
 
-            {/* Flat Grid Catalog View */}
-            {marketViewMode === "grid" && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-xs text-[#B5BAC0] px-1">
-                  <div>
-                    Showing <strong className="text-white">{allFilteredFlat.length}</strong> total single spare parts across all systems
-                  </div>
+              {/* Row 5: HAVE A FAULT CODE? TAP ONE */}
+              <div className="space-y-2.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+                    HAVE A FAULT CODE? TAP ONE
+                  </span>
+                  <button
+                    onClick={() => setSelectedDtc("ALL")}
+                    className="text-xs text-[#D93A10] font-semibold hover:underline cursor-pointer"
+                  >
+                    Reset
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                  {allFilteredFlat.map((part) => (
-                    <div
-                      key={part.id}
-                      className="rounded-2xl bg-[#0F1012]/95 border border-[#3A3F45] hover:border-[#D93A10]/50 transition flex flex-col justify-between overflow-hidden"
-                    >
-                      <div className="p-4 space-y-3">
-                        <div className="flex items-center justify-between text-[11px] text-[#B5BAC0]">
-                          <span className="font-mono">{part.sku}</span>
-                          <span className="text-[#FF6A3D] font-semibold">{part.voltage}</span>
-                        </div>
-
-                        {/* Component Visual Reference Image */}
-                        <div className="relative w-full h-40 rounded-xl overflow-hidden bg-[#050506] border border-[#3A3F45] flex items-center justify-center p-2">
-                          <img
-                            src={part.image}
-                            alt={part.name}
-                            className="w-full h-full object-contain hover:scale-105 transition-transform duration-300"
-                          />
-                        </div>
-
-                        <div>
-                          {part.localAmharicName && (
-                            <div className="inline-block px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 text-[11px] font-bold border border-emerald-800/70 mb-1">
-                              {part.localAmharicName}
-                            </div>
-                          )}
-                          <h4 className="text-sm font-bold text-white">{part.name}</h4>
-                        </div>
-
-                        {part.dtcCodes && part.dtcCodes.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] text-[#8A8F96] font-semibold">DTC:</span>
-                            {part.dtcCodes.map((code) => (
-                              <button
-                                key={code}
-                                onClick={() => setSelectedDtc(code.split("/")[0])}
-                                className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/70 hover:bg-amber-800/50"
-                              >
-                                {code}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        <p className="text-xs text-[#B5BAC0] line-clamp-2">{part.role}</p>
-
-                        {(part.laborTimeEst || part.difficulty) && (
-                          <div className="flex items-center justify-between text-[11px] py-1 px-2 rounded-lg bg-[#050506]/90 border border-[#3A3F45]">
-                            <span className="text-[#B5BAC0] flex items-center gap-1 font-mono">
-                              <Clock className="w-3 h-3 text-[#8A8F96]" />
-                              Labor: <strong className="text-[#F5F5F5]">{part.laborTimeEst || "45m"}</strong>
-                            </span>
-                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                              part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "bg-red-950/70 text-red-300 border border-red-800/60" :
-                              part.difficulty === "INTERMEDIATE" ? "bg-[#D93A10]/10 text-[#FF6A3D] border border-amber-800/60" :
-                              "bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
-                            }`}>
-                              {part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "PRO GARAGE" :
-                               part.difficulty === "INTERMEDIATE" ? "MODERATE" : "DIY FRIENDLY"}
-                            </span>
-                          </div>
-                        )}
-
-                        {part.garageInspectionTips && (
-                          <div className="p-2 rounded-xl bg-blue-950/30 border border-blue-900/50 text-[10px] text-blue-200/90 italic line-clamp-2">
-                            Tip: {part.garageInspectionTips}
-                          </div>
-                        )}
-
-                        <div className="text-xs text-[#B5BAC0]">
-                          Primary: <strong className="text-[#F5F5F5]">{part.primaryVehicleModel}</strong>
-                        </div>
-                        <div className="pt-2 flex items-baseline justify-between border-t border-[#3A3F45]">
-                          <div>
-                            <div className="text-base font-black text-white">
-                              {part.priceEstBirr.toLocaleString()} ETB
-                            </div>
-                            <div className="text-[10px] text-[#8A8F96] line-through">
-                              {part.originalPriceBirr.toLocaleString()} ETB
-                            </div>
-                          </div>
-                          <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/80">
-                            {part.marketHub}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-4 pt-0 space-y-2 border-t border-[#3A3F45]">
-                        <button
-                          onClick={() => toggleBundlePart(part)}
-                          className={`w-full py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                            buildBundle.some((p) => p.id === part.id)
-                              ? "bg-blue-600 text-white"
-                              : "bg-[#050506] hover:bg-[#1E2024] text-blue-400 border border-[#3A3F45]"
-                          }`}
-                        >
-                          <PackageCheck className="w-3.5 h-3.5" />
-                          {buildBundle.some((p) => p.id === part.id) ? "In Build Bundle" : "+ Add to Bundle"}
-                        </button>
-                        <button
-                          onClick={() => setRfqModalPart(part)}
-                          className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20"
-                        >
-                          <Zap className="w-3.5 h-3.5 fill-current" />
-                          Request Quotes (RFQ)
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex flex-wrap items-center gap-2">
+                  {POPULAR_GARAGE_DTCS.map((dtc) => {
+                    const isSelected = selectedDtc === dtc.code;
+                    return (
+                      <button
+                        key={dtc.code}
+                        onClick={() => setSelectedDtc(dtc.code)}
+                        className={`px-3.5 py-1.5 rounded-full text-xs transition ${
+                          isSelected
+                            ? "bg-[#D93A10] text-white font-bold shadow-md shadow-orange-950/40"
+                            : "bg-[#0B0C0E] border border-[#2A2E35] text-zinc-300 font-medium hover:border-zinc-500"
+                        }`}
+                      >
+                        {dtc.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            )}
+
+              {/* Row 6: Subsystem Components Filter Pills */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => setSelectedSubcategory("ALL")}
+                  className={`px-4 py-1.5 rounded-full text-xs transition ${
+                    selectedSubcategory === "ALL"
+                      ? "bg-[#0B0C0E] border border-zinc-500 text-white font-bold shadow-sm"
+                      : "bg-[#0B0C0E] border border-[#2A2E35] text-zinc-300 font-medium hover:border-zinc-500"
+                  }`}
+                >
+                  All components ({activeSystem.singleParts.length})
+                </button>
+                {activeSystem.subcategories.map((subcat) => {
+                  const isSelected = selectedSubcategory === subcat;
+                  return (
+                    <button
+                      key={subcat}
+                      onClick={() => setSelectedSubcategory(subcat)}
+                      className={`px-3.5 py-1.5 rounded-full text-xs transition ${
+                        isSelected
+                          ? "bg-[#0B0C0E] border border-zinc-500 text-white font-bold shadow-sm"
+                          : "bg-[#0B0C0E] border border-[#2A2E35] text-zinc-300 font-medium hover:border-zinc-500"
+                      }`}
+                    >
+                      {subcat}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Row 7: Active Filter Tags Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-[#1F2227] text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Active System Tag */}
+                  <span
+                    onClick={() => {
+                      setSelectedSystemId("ems");
+                      setSelectedSubcategory("ALL");
+                    }}
+                    className="px-3 py-1 rounded-full bg-[#15171A] border border-[#2A2E35] text-zinc-200 text-xs font-medium flex items-center gap-1.5 cursor-pointer hover:border-zinc-500 transition"
+                  >
+                    <span>{activeSystem.name.split(" (")[0]}</span>
+                    <X className="w-3 h-3 text-zinc-400" />
+                  </span>
+
+                  {/* Active DTC Tag if selected */}
+                  {selectedDtc !== "ALL" && (
+                    <span
+                      onClick={() => setSelectedDtc("ALL")}
+                      className="px-3 py-1 rounded-full bg-[#15171A] border border-[#2A2E35] text-zinc-200 text-xs font-medium flex items-center gap-1.5 cursor-pointer hover:border-zinc-500 transition"
+                    >
+                      <span>{selectedDtc}</span>
+                      <X className="w-3 h-3 text-zinc-400" />
+                    </span>
+                  )}
+
+                  {/* Active Market Hub / Shop Tag if selected */}
+                  {selectedMarketHub !== "ALL" && (
+                    <span
+                      onClick={() => setSelectedMarketHub("ALL")}
+                      className="px-3 py-1 rounded-full bg-[#15171A] border border-amber-500/40 text-amber-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer hover:border-amber-400 transition"
+                    >
+                      <span>
+                        {selectedMarketHub.startsWith("SHOP:")
+                          ? `Shop: ${selectedMarketHub.replace("SHOP:", "")}`
+                          : `Hub: ${selectedMarketHub}`}
+                      </span>
+                      <X className="w-3 h-3 text-zinc-400" />
+                    </span>
+                  )}
+
+                  {/* Clear all */}
+                  {(selectedDtc !== "ALL" || selectedSubcategory !== "ALL" || selectedMarketHub !== "ALL" || searchQuery) && (
+                    <button
+                      onClick={() => {
+                        setSelectedDtc("ALL");
+                        setSelectedSubcategory("ALL");
+                        setSelectedMarketHub("ALL");
+                        setSearchQuery("");
+                      }}
+                      className="text-xs text-[#D93A10] font-semibold hover:underline cursor-pointer ml-1"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-mono text-zinc-400">
+                    {marketViewMode === "systems" ? filteredParts.length : allFilteredFlat.length} parts
+                  </span>
+                  <button className="px-3 py-1 rounded-full bg-[#0B0C0E] border border-[#2A2E35] text-zinc-300 text-xs font-medium flex items-center gap-1 hover:border-zinc-500 transition">
+                    <span>Most requested</span>
+                    <ChevronDown className="w-3 h-3 text-zinc-400" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 8: The Product Cards Grid (Matching Picture 1 Exactly) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
+                {(marketViewMode === "systems" ? filteredParts : allFilteredFlat)
+                  .slice(0, visiblePartsLimit)
+                  .map((part) => {
+                    return (
+                      <div
+                        key={part.id}
+                        className="rounded-3xl bg-[#0B0C0E] border border-[#1F2227] hover:border-[#3A3F45] p-3.5 flex flex-col justify-between transition-all duration-300 shadow-xl"
+                      >
+                        <div>
+                          {/* Product Image Frame with light backdrop for crisp part visibility */}
+                          <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden bg-[#EEEEEE] flex items-center justify-center p-3 mb-3 group">
+                            <img
+                              src={part.image}
+                              alt={part.name}
+                              className="w-full h-full object-contain mix-blend-multiply group-hover:scale-105 transition-transform duration-300"
+                            />
+                            {/* Top Right Difficulty Badge */}
+                            <span
+                              className={`absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-black/90 backdrop-blur-sm border ${
+                                part.difficulty === "PROFESSIONAL_GARAGE_ONLY"
+                                  ? "text-[#FF6A3D] border-[#FF6A3D]/40"
+                                  : "text-emerald-400 border-emerald-500/40"
+                              }`}
+                            >
+                              {part.difficulty === "PROFESSIONAL_GARAGE_ONLY" ? "PRO GARAGE" : "DIY FRIENDLY"}
+                            </span>
+
+                            {/* Bottom Left SKU Pill */}
+                            <span className="absolute bottom-2.5 left-2.5 px-2.5 py-0.5 rounded-md bg-black/95 text-[#FF6A3D] font-mono text-[10px] font-bold border border-white/10 backdrop-blur-sm">
+                              {part.sku}
+                            </span>
+                          </div>
+
+                          {/* Category */}
+                          <span className="text-[10px] font-black text-[#D93A10] uppercase tracking-wider block mb-1">
+                            {part.systemSubcategory === "Fuel & Injection"
+                              ? "FUEL SYSTEM"
+                              : part.systemSubcategory === "Thermal & Auxiliary"
+                              ? "STARTING SYSTEM"
+                              : part.systemSubcategory === "Control Units"
+                              ? "ELECTRONICS"
+                              : part.systemSubcategory === "Air & Pressure Sensors"
+                              ? "SENSORS"
+                              : part.systemSubcategory.toUpperCase()}
+                          </span>
+
+                          {/* Title */}
+                          <h3 className="text-[13px] font-bold text-white leading-snug line-clamp-2 min-h-[36px]">
+                            {part.name}
+                          </h3>
+
+                          {/* Description */}
+                          <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed mt-1.5">
+                            {part.role}
+                          </p>
+
+                          {/* DTC / Problem Tags */}
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                            {part.dtcCodes &&
+                              part.dtcCodes.slice(0, 2).map((code) => (
+                                <span
+                                  key={code}
+                                  className="px-2 py-0.5 rounded bg-[#15171A] border border-[#2A2E35] text-zinc-300 font-mono text-[9px] font-medium"
+                                >
+                                  {code}
+                                </span>
+                              ))}
+                            {part.dtcCodes && part.dtcCodes.length > 2 && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#15171A] border border-[#2A2E35] text-zinc-400 font-mono text-[9px] font-medium">
+                                +{part.dtcCodes.length - 2}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Specification / Labor */}
+                          <div className="text-[11px] text-zinc-400 mt-2 font-medium">
+                            {part.brand} · Labor {part.laborTimeEst || "45 mins"}
+                          </div>
+
+                          {/* Shop Availability */}
+                          <div className="flex items-center justify-between text-[11px] mt-2.5 pt-2.5 border-t border-[#1F2227]">
+                            <div className="flex items-center gap-1.5 text-emerald-400 font-medium truncate max-w-[170px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                              <span className="truncate">
+                                {selectedMarketHub.startsWith("SHOP:")
+                                  ? selectedMarketHub.replace("SHOP:", "")
+                                  : part.marketHub}
+                              </span>
+                            </div>
+                            <span className="text-zinc-400 font-mono shrink-0">
+                              {selectedMarketHub.startsWith("SHOP:") ? "Verified In Stock" : `${part.stockVendorsCount} shops`}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 mt-3 pt-2">
+                          <button
+                            onClick={() => setRfqModalPart(part)}
+                            className="flex-1 py-2 rounded-full bg-[#D93A10] hover:bg-[#F04A1C] text-white text-xs font-bold transition text-center shadow-md shadow-orange-950/40"
+                          >
+                            Get offers
+                          </button>
+                          <button
+                            onClick={() => setSelectedPartForSpecs(part)}
+                            className="py-2 px-3.5 rounded-full bg-[#15171A] hover:bg-[#202428] border border-[#3A3F45] text-white text-xs font-medium transition text-center"
+                          >
+                            Details
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Load More Parts Button (Dynamic Pagination & No Alert) */}
+              <div className="pt-4 flex flex-col items-center justify-center gap-2">
+                {(marketViewMode === "systems"
+                  ? visiblePartsLimit < filteredParts.length
+                  : visiblePartsLimit < allFilteredFlat.length) ? (
+                  <button
+                    onClick={handleLoadMoreParts}
+                    disabled={isLoadingMoreParts}
+                    className="px-8 py-2.5 rounded-full bg-[#050506] hover:bg-[#15171A] border border-[#2A2E35] hover:border-[#D93A10] text-xs font-bold text-white transition shadow-lg flex items-center gap-2 group disabled:opacity-60"
+                  >
+                    {isLoadingMoreParts ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#FF6A3D]" />
+                        <span>Loading more genuine parts...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Load more parts</span>
+                        <span className="text-[10px] text-[#FF6A3D] font-mono font-bold bg-[#D93A10]/15 px-2 py-0.5 rounded-full border border-[#D93A10]/30">
+                          +4 more
+                        </span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <div className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-[#050506] border border-[#2A2E35] text-xs text-zinc-400 font-medium">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>
+                      All {marketViewMode === "systems" ? filteredParts.length : allFilteredFlat.length} verified spare parts displayed
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Deep Red Showcase Banner (Image 1 Bottom Card) */}
+            <div className="bg-gradient-to-r from-[#200A08] via-[#140606] to-[#0A0404] border border-[#5A1E1A] rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-4 mt-6 shadow-2xl">
+              <div className="space-y-1">
+                <h3 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                  Cannot find your part?
+                </h3>
+                <p className="text-xs text-zinc-400 font-light">
+                  Describe it or send a photo. Verified shops will check their shelves for you.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setCurrentRole("buyer");
+                }}
+                className="bg-[#D93A10] hover:bg-[#F04A1C] text-white font-bold px-6 py-2.5 rounded-full text-xs shadow-lg shadow-orange-950/40 transition whitespace-nowrap self-start md:self-auto"
+              >
+                Request a custom part
+              </button>
+            </div>
+
+            {/* Bottom Footer Line matching Picture 1 */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 text-xs text-zinc-500 border-t border-[#1F2227]">
+              <div>TeraSync: Spare parts for Addis Ababa.</div>
+              <div className="flex items-center gap-6">
+                <button className="hover:text-zinc-300 transition">About</button>
+                <button className="hover:text-zinc-300 transition">Contact</button>
+                <button className="hover:text-zinc-300 transition">Terms</button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2688,6 +2830,37 @@ export default function TeraSyncPlatform() {
               </div>
             </div>
 
+            {/* Workshop Floor Hero Banner */}
+            <div className="relative rounded-2xl overflow-hidden border border-[#3A3F45] bg-[#0c1324] shadow-2xl">
+              <div className="relative h-48 sm:h-56 w-full">
+                <img
+                  src="/images/garage-workshop-bay.jpg"
+                  alt="Addis Ababa Certified Garage Workshop Floor"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0B0C0E] via-[#0B0C0E]/60 to-transparent" />
+                <div className="absolute bottom-4 left-4 right-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold border border-emerald-500/40 backdrop-blur-md mb-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Live Workshop Floor • Addis Ababa Central Facility
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight drop-shadow-md">
+                      Bole Medhanialem Diagnostic &amp; Service Center
+                    </h2>
+                    <p className="text-xs text-[#D0D4DA] max-w-xl drop-shadow">
+                      4 active hydraulic repair bays equipped with OBD-II telematics, high-voltage EV diagnostic rigs, and direct TeraSync parts escrow integration.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 text-xs font-mono text-emerald-400 font-bold">
+                      Bays Active: 4/4
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Workshop Repair Bays & Live Diagnostic Job Cards */}
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#3A3F45] pb-3">
@@ -2742,6 +2915,26 @@ export default function TeraSyncPlatform() {
                             {jc.status.replace(/_/g, " ")}
                           </span>
                         </div>
+
+                        {/* Bay Live Diagnostic Inspection Photo */}
+                        {jc.bayPhoto && (
+                          <div className="relative rounded-xl overflow-hidden border border-[#3A3F45] bg-black/80 aspect-[16/9] group">
+                            <img
+                              src={jc.bayPhoto}
+                              alt={jc.photoCaption || jc.vehicle}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/20" />
+                            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px]">
+                              <span className="text-white font-medium truncate drop-shadow bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm border border-white/10">
+                                {jc.photoCaption}
+                              </span>
+                              <span className="text-emerald-400 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700 shrink-0 ml-1">
+                                LIVE BAY CAM
+                              </span>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Vehicle Specs Bar */}
                         <div className="grid grid-cols-2 gap-2 text-[11px] py-1.5 px-3 rounded-xl bg-[#050506]/90 border border-[#3A3F45]">
@@ -2815,8 +3008,8 @@ export default function TeraSyncPlatform() {
                 <div className="flex items-start gap-4">
                   <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-[#4A4F55] bg-black">
                     <img
-                      src="/images/gear-precision.jpg"
-                      alt="Alternator part inspection"
+                      src="/images/mechanic-underhood-inspection.jpg"
+                      alt="Mechanic Under-Hood Physical Inspection"
                       className="w-full h-full object-cover"
                     />
                   </div>
@@ -3321,8 +3514,11 @@ export default function TeraSyncPlatform() {
                   <p className="text-xs text-[#B5BAC0]">Toyota Hilux 1KD Alternator Assembly (80A Denso)</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-xs text-[#B5BAC0]">Delivery Payout</span>
-                  <div className="text-lg font-black text-[#FF6A3D]">350.00 ETB</div>
+                  <span className="text-xs text-[#B5BAC0]">Delivery &amp; Commission Earnings</span>
+                  <div className="text-lg font-black text-[#FF6A3D]">
+                    {deliverySettlementStatus === "SETTLED" ? "1,092.50 ETB" : "350.00 ETB + 5%"}
+                  </div>
+                  <span className="text-[10px] text-[#8A8F96]">Base: 350 ETB + 5% Commission Bonus</span>
                 </div>
               </div>
 
@@ -3349,12 +3545,22 @@ export default function TeraSyncPlatform() {
                       <Wrench className="w-4 h-4 text-blue-400" />
                       2. Destination: Tadesse Garage (Bole)
                     </span>
-                    <span className="text-[#FF6A3D] text-[10px] font-mono uppercase bg-[#D93A10]/10 px-2 py-0.5 rounded border border-amber-900">
-                      Pending PIN
+                    <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
+                      deliverySettlementStatus === "SETTLED"
+                        ? "bg-emerald-950 text-emerald-400 border-emerald-800"
+                        : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                        ? "bg-amber-950 text-amber-400 border-amber-800"
+                        : "bg-[#D93A10]/10 text-[#FF6A3D] border-amber-900"
+                    }`}>
+                      {deliverySettlementStatus === "SETTLED"
+                        ? "SETTLED"
+                        : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                        ? "PIN CONFIRMED"
+                        : "Pending Customer PIN"}
                     </span>
                   </div>
                   <p className="text-xs text-[#B5BAC0]">
-                    Ask the garage mechanic for their 4-digit PIN after they physically test fitment.
+                    Ask the customer / garage mechanic to enter their 4-digit verification ID code after checking the part.
                   </p>
 
                   <div className="flex items-center gap-2 pt-1">
@@ -3364,26 +3570,51 @@ export default function TeraSyncPlatform() {
                       value={pinInput}
                       onChange={(e) => setPinInput(e.target.value)}
                       placeholder="Enter 4-Digit PIN"
-                      className="w-36 bg-[#0F1012] border border-[#4A4F55] rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest text-white focus:outline-none focus:border-[#D93A10]"
+                      disabled={deliverySettlementStatus !== "IN_TRANSIT"}
+                      className="w-36 bg-[#0F1012] border border-[#4A4F55] rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest text-white focus:outline-none focus:border-[#D93A10] disabled:opacity-50"
                     />
                     <button
                       onClick={() => {
                         if (pinInput === "7419") {
                           setPinVerified(true);
+                          setDeliverySettlementStatus("ARRIVED_VERIFIED");
+                          setRfqSuccessToast("✅ Customer Handshake PIN #7419 Confirmed! Central Admin notified that order arrived safely.");
+                          setTimeout(() => setRfqSuccessToast(null), 6000);
                         } else {
-                          alert("Incorrect PIN. Must match buyer's derived secret.");
+                          alert("Incorrect PIN. Must match customer's verified ID (7419).");
                         }
                       }}
-                      className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition"
+                      disabled={deliverySettlementStatus !== "IN_TRANSIT"}
+                      className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition disabled:opacity-50"
                     >
-                      Verify &amp; Release
+                      Verify Customer PIN
                     </button>
                   </div>
 
-                  {pinVerified && (
-                    <div className="p-2.5 rounded-lg bg-emerald-950/70 border border-emerald-800 text-emerald-400 text-xs flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 shrink-0" />
-                      <span>PIN Verified! Funds released to vendor. 350 ETB credited to courier.</span>
+                  {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+                    <div className="p-3.5 rounded-xl bg-amber-950/70 border border-amber-600/70 text-amber-200 text-xs space-y-1.5 animate-fadeIn">
+                      <div className="flex items-center gap-2 font-bold text-amber-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>✅ Handshake PIN #7419 Confirmed! Arrived Safely.</span>
+                      </div>
+                      <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                        Order #TR-2026-0081 delivered safely to Tadesse Garage. <strong>Central Admin has been notified</strong> that the part arrived in good condition. The Admin will now disburse the funds on air: 92% (13,662 ETB) to Alpha Spares and your 5% commission + 350 ETB delivery fee (1,092.50 ETB) to Telebirr.
+                      </p>
+                    </div>
+                  )}
+
+                  {deliverySettlementStatus === "SETTLED" && (
+                    <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/80 text-emerald-300 text-xs space-y-2 animate-fadeIn">
+                      <div className="flex items-center gap-2 font-bold text-emerald-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>🚀 Air Payout Released by Central Admin!</span>
+                      </div>
+                      <p className="text-[11px] text-emerald-200/90">
+                        Admin transferred funds over the air: <strong>1,092.50 ETB</strong> (350 ETB base + 5% commission) credited to your Telebirr (0922776655). Reference: <span className="font-mono">{airPayoutTx?.courierTx || "TB-AIR-89210"}</span>.
+                      </p>
+                      <div className="text-[11px] text-[#8A8F96]">
+                        Courier Account Balance: <strong className="text-white font-mono">{courierBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB</strong>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3448,10 +3679,34 @@ export default function TeraSyncPlatform() {
             </div>
 
             {/* Admin Sub-Tabs */}
-            <div className="flex items-center gap-2 border-b border-[#3A3F45] pb-2">
+            <div className="flex items-center gap-2 border-b border-[#3A3F45] pb-2 overflow-x-auto">
+              <button
+                onClick={() => setAdminSubTab("settlements")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
+                  adminSubTab === "settlements"
+                    ? "bg-[#D93A10] text-white shadow-md shadow-orange-500/20"
+                    : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
+                }`}
+              >
+                <span>Escrow Deliveries &amp; Air Payouts</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
+                  deliverySettlementStatus === "ARRIVED_VERIFIED"
+                    ? "bg-amber-400 text-black font-black animate-pulse"
+                    : deliverySettlementStatus === "SETTLED"
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-blue-500/20 text-blue-300"
+                }`}>
+                  {deliverySettlementStatus === "ARRIVED_VERIFIED"
+                    ? "🔔 1 Arrived Safely"
+                    : deliverySettlementStatus === "SETTLED"
+                    ? "✅ Settled"
+                    : "1 In Transit"}
+                </span>
+              </button>
+
               <button
                 onClick={() => setAdminSubTab("applications")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
                   adminSubTab === "applications"
                     ? "bg-[#D93A10] text-white shadow-md shadow-orange-500/20"
                     : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
@@ -3465,7 +3720,7 @@ export default function TeraSyncPlatform() {
 
               <button
                 onClick={() => setAdminSubTab("disputes")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
                   adminSubTab === "disputes"
                     ? "bg-[#D93A10] text-white shadow-md shadow-orange-500/20"
                     : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
@@ -3477,6 +3732,220 @@ export default function TeraSyncPlatform() {
                 </span>
               </button>
             </div>
+
+            {/* Sub-tab 0: Escrow Deliveries & Air Payout Release */}
+            {adminSubTab === "settlements" && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>Escrow Delivery Handshake &amp; Air Payout Clearinghouse</span>
+                      {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-black animate-pulse">
+                          ACTION REQUIRED
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-[#B5BAC0]">
+                      Orders delivered to garages and verified via customer ID code are queued here for instant over-the-air fund disbursement to merchant &amp; courier.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Handshake Verified Alert Banner */}
+                {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+                  <div className="p-4 rounded-2xl bg-amber-950/70 border-2 border-amber-500/80 text-amber-200 text-xs space-y-2 shadow-2xl animate-fadeIn">
+                    <div className="flex items-center gap-2 font-black text-amber-300 text-sm">
+                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                      <span>🔔 ALERT: Order #TR-2026-0081 Arrived Safely at Destination!</span>
+                    </div>
+                    <p className="leading-relaxed text-amber-100/90 text-xs">
+                      Customer (<strong>Tadesse Garage</strong>) has physically checked the part and entered verification ID code <strong className="font-mono bg-black/50 px-1.5 py-0.5 rounded text-amber-300">#7419</strong> on Courier Abebe Kebede&apos;s portal. The delivery is complete and confirmed safe. <strong>Please authorize passing the customer payment on air to the shop and the percentage commission to the delivery courier.</strong>
+                    </p>
+                  </div>
+                )}
+
+                {/* Live Settlement Card */}
+                <div className={`p-6 rounded-3xl bg-[#0F1012]/95 border transition-all space-y-6 shadow-2xl ${
+                  deliverySettlementStatus === "ARRIVED_VERIFIED"
+                    ? "border-amber-500/70 shadow-amber-500/10"
+                    : deliverySettlementStatus === "SETTLED"
+                    ? "border-emerald-500/60 shadow-emerald-500/10"
+                    : "border-[#3A3F45]"
+                }`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#3A3F45] pb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-blue-400">Order #TR-2026-0081</span>
+                        <span className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full ${
+                          deliverySettlementStatus === "SETTLED"
+                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                            : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                            ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                            : "bg-blue-500/20 text-blue-400 border border-blue-500/40"
+                        }`}>
+                          {deliverySettlementStatus === "SETTLED"
+                            ? "✅ SETTLED · DISBURSED ON AIR"
+                            : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                            ? "🔔 ARRIVED SAFELY · PIN VERIFIED"
+                            : "⏳ IN TRANSIT"}
+                        </span>
+                      </div>
+                      <h4 className="text-base font-bold text-white mt-1">
+                        Toyota Hilux 1KD Alternator Assembly (80A Denso)
+                      </h4>
+                      <p className="text-xs text-[#B5BAC0]">
+                        Customer: <strong className="text-white">Tadesse Garage (Bole)</strong> &bull; Courier: <strong className="text-white">Abebe Kebede (Motorcycle)</strong>
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-xs text-[#B5BAC0]">Total Buyer Escrow Held</span>
+                      <div className="text-2xl font-black text-emerald-400">14,850.00 ETB</div>
+                      <span className="text-[10px] text-[#8A8F96]">Telebirr &amp; Chapa Escrow Vault</span>
+                    </div>
+                  </div>
+
+                  {/* 3-Way Air Disbursement Split Details */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* 1. Shop Payout */}
+                    <div className="p-4 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Store className="w-4 h-4 text-emerald-400" />
+                          1. Shop Payout (92%)
+                        </span>
+                        <span className="text-xs font-mono font-black text-emerald-400">
+                          13,662.00 ETB
+                        </span>
+                      </div>
+                      <div className="text-xs space-y-1 text-[#B5BAC0]">
+                        <div>Vendor: <strong className="text-white">Alpha Auto Spares</strong></div>
+                        <div>Bank: <strong className="text-white">CBE (Commercial Bank)</strong></div>
+                        <div>Account: <strong className="font-mono text-white">100019283746</strong></div>
+                        <div className="text-[10px] text-emerald-400 font-semibold pt-1">
+                          Direct Air Payout to Merchant Bank Account
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Courier Payout (5% + 350 ETB) */}
+                    <div className="p-4 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Bike className="w-4 h-4 text-[#FF6A3D]" />
+                          2. Courier Payout (5% + Fee)
+                        </span>
+                        <span className="text-xs font-mono font-black text-[#FF6A3D]">
+                          1,092.50 ETB
+                        </span>
+                      </div>
+                      <div className="text-xs space-y-1 text-[#B5BAC0]">
+                        <div>Courier: <strong className="text-white">Abebe Kebede</strong></div>
+                        <div>5% Commission: <strong className="font-mono text-white">742.50 ETB</strong></div>
+                        <div>Base Delivery Fee: <strong className="font-mono text-white">350.00 ETB</strong></div>
+                        <div>Provider: <strong className="text-white">Telebirr (0922776655)</strong></div>
+                        <div className="text-[10px] text-[#FF6A3D] font-semibold pt-1">
+                          Instant Air Credit to Courier Wallet
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. Platform Fee */}
+                    <div className="p-4 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <ShieldCheck className="w-4 h-4 text-blue-400" />
+                          3. Platform Fee (3%)
+                        </span>
+                        <span className="text-xs font-mono font-black text-blue-400">
+                          445.50 ETB
+                        </span>
+                      </div>
+                      <div className="text-xs space-y-1 text-[#B5BAC0]">
+                        <div>Clearing: <strong className="text-white">TeraSync Network</strong></div>
+                        <div>Service: <strong className="text-white">Escrow &amp; Audit Chain</strong></div>
+                        <div>Status: <strong className="text-emerald-400 font-semibold">Protected</strong></div>
+                        <div className="text-[10px] text-blue-300 font-semibold pt-1">
+                          Platform Escrow Retained Share
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Verification & Action Trigger */}
+                  <div className="p-4 rounded-2xl bg-[#050506]/90 border border-[#3A3F45] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-xs font-bold text-white">
+                        <span>Customer Verifying Handshake ID:</span>
+                        <span className="font-mono bg-emerald-950/80 text-emerald-400 px-2 py-0.5 rounded border border-emerald-800 font-black">
+                          #7419
+                        </span>
+                        <span className="text-[11px] text-emerald-400 font-semibold">
+                          {deliverySettlementStatus === "ARRIVED_VERIFIED" || deliverySettlementStatus === "SETTLED" ? "✓ Verified by Garage" : "Pending Handshake"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#8A8F96]">
+                        {deliverySettlementStatus === "SETTLED"
+                          ? `Air payouts disbursed on ${airPayoutTx?.timestamp || "just now"}. CBE Tx: ${airPayoutTx?.shopTx || "CBE-AIR-982143"} | Telebirr Tx: ${airPayoutTx?.courierTx || "TB-AIR-582109"}`
+                          : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                          ? "Handshake code matched. Admin authorization required to release the funds over the air to shop CBE & courier Telebirr."
+                          : "Item is in transit. Courier will collect the customer's 4-digit ID code upon safe arrival."}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {deliverySettlementStatus === "IN_TRANSIT" && (
+                        <button
+                          onClick={() => {
+                            setPinInput("7419");
+                            setPinVerified(true);
+                            setDeliverySettlementStatus("ARRIVED_VERIFIED");
+                            setRfqSuccessToast("✅ Simulated customer code entry (7419). Order marked arrived safely!");
+                            setTimeout(() => setRfqSuccessToast(null), 5000);
+                          }}
+                          className="px-4 py-2.5 rounded-xl bg-[#1E2024] hover:bg-[#2A2E33] border border-[#3A3F45] text-xs font-bold text-[#D0D4DA] transition"
+                        >
+                          Simulate Customer Handshake (#7419)
+                        </button>
+                      )}
+
+                      {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+                        <button
+                          onClick={() => {
+                            setDeliverySettlementStatus("SETTLED");
+                            setShopBalance((prev) => prev + 13662);
+                            setCourierBalance((prev) => prev + 1092.5);
+                            const newTx = {
+                              shopTx: "CBE-AIR-" + Math.floor(100000 + Math.random() * 900000),
+                              courierTx: "TB-AIR-" + Math.floor(100000 + Math.random() * 900000),
+                              shopAmount: 13662,
+                              courierAmount: 1092.5,
+                              platformFee: 445.5,
+                              timestamp: new Date().toLocaleTimeString(),
+                            };
+                            setAirPayoutTx(newTx);
+                            setRfqSuccessToast("🚀 Air Payouts Disbursed! 13,662.00 ETB passed to Alpha Spares (CBE) & 1,092.50 ETB passed to Courier Abebe (Telebirr).");
+                            setTimeout(() => setRfqSuccessToast(null), 7000);
+                          }}
+                          className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition flex items-center gap-2 shadow-xl shadow-emerald-600/30 animate-pulse"
+                        >
+                          <Zap className="w-4 h-4 fill-current text-white" />
+                          <span>Approve &amp; Release Air Payouts to Shop &amp; Courier</span>
+                        </button>
+                      )}
+
+                      {deliverySettlementStatus === "SETTLED" && (
+                        <div className="px-4 py-2 rounded-xl bg-emerald-950/80 border border-emerald-500/80 text-emerald-300 text-xs font-bold flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <span>Air Payouts Settled &amp; Transferred</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Sub-tab 1: Applications Queue */}
             {adminSubTab === "applications" && (

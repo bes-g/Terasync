@@ -48,8 +48,19 @@ export default function AdminPage() {
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"applications" | "disputes">("applications");
+  const [activeTab, setActiveTab] = useState<"settlements" | "applications" | "disputes">("settlements");
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [deliverySettlementStatus, setDeliverySettlementStatus] = useState<"IN_TRANSIT" | "ARRIVED_VERIFIED" | "SETTLED">("ARRIVED_VERIFIED");
+  const [shopBalance, setShopBalance] = useState<number>(42650);
+  const [courierBalance, setCourierBalance] = useState<number>(350);
+  const [airPayoutTx, setAirPayoutTx] = useState<{
+    shopTx: string;
+    courierTx: string;
+    shopAmount: number;
+    courierAmount: number;
+    platformFee: number;
+    timestamp: string;
+  } | null>(null);
 
   const [applications, setApplications] = useState<PendingApp[]>([
     {
@@ -424,10 +435,34 @@ export default function AdminPage() {
         </div>
 
         {/* Admin Sub-Tabs */}
-        <div className="flex items-center gap-2 border-b border-[#3A3F45] pb-2">
+        <div className="flex items-center gap-2 border-b border-[#3A3F45] pb-2 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab("settlements")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
+              activeTab === "settlements"
+                ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
+                : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
+            }`}
+          >
+            <span>Escrow Deliveries &amp; Air Payouts</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
+              deliverySettlementStatus === "ARRIVED_VERIFIED"
+                ? "bg-amber-400 text-black font-black animate-pulse"
+                : deliverySettlementStatus === "SETTLED"
+                ? "bg-emerald-500/20 text-emerald-300"
+                : "bg-blue-500/20 text-blue-300"
+            }`}>
+              {deliverySettlementStatus === "ARRIVED_VERIFIED"
+                ? "🔔 1 Arrived Safely"
+                : deliverySettlementStatus === "SETTLED"
+                ? "✅ Settled"
+                : "1 In Transit"}
+            </span>
+          </button>
+
           <button
             onClick={() => setActiveTab("applications")}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
               activeTab === "applications"
                 ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
                 : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
@@ -441,7 +476,7 @@ export default function AdminPage() {
 
           <button
             onClick={() => setActiveTab("disputes")}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
               activeTab === "disputes"
                 ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
                 : "bg-[#0F1012] text-[#B5BAC0] hover:text-white border border-[#3A3F45]"
@@ -453,6 +488,204 @@ export default function AdminPage() {
             </span>
           </button>
         </div>
+
+        {/* ── Sub-tab 0: Escrow Deliveries & Air Payout Release ── */}
+        {activeTab === "settlements" && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>Escrow Delivery Handshake &amp; Air Payout Clearinghouse</span>
+                  {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-black animate-pulse">
+                      ACTION REQUIRED
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-[#B5BAC0]">
+                  Orders delivered to garages and verified via customer ID code are queued here for instant over-the-air fund disbursement to merchant &amp; courier.
+                </p>
+              </div>
+            </div>
+
+            {/* Handshake Verified Alert Banner */}
+            {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+              <div className="p-4 rounded-2xl bg-amber-950/70 border-2 border-amber-500/80 text-amber-200 text-xs space-y-2 shadow-2xl animate-fadeIn">
+                <div className="flex items-center gap-2 font-black text-amber-300 text-sm">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                  <span>🔔 ALERT: Order #TR-2026-0081 Arrived Safely at Destination!</span>
+                </div>
+                <p className="leading-relaxed text-amber-100/90 text-xs">
+                  Customer (<strong>Tadesse Garage</strong>) has physically checked the part and entered verification ID code <strong className="font-mono bg-black/50 px-1.5 py-0.5 rounded text-amber-300">#7419</strong> on Courier Abebe Kebede&apos;s portal. The delivery is complete and confirmed safe. <strong>Please authorize passing the customer payment on air to the shop and the percentage commission to the delivery courier.</strong>
+                </p>
+              </div>
+            )}
+
+            {/* Live Settlement Card */}
+            <div className={`p-6 rounded-3xl bg-[#0F1012]/95 border transition-all space-y-6 shadow-2xl ${
+              deliverySettlementStatus === "ARRIVED_VERIFIED"
+                ? "border-amber-500/70 shadow-amber-500/10"
+                : deliverySettlementStatus === "SETTLED"
+                ? "border-emerald-500/60 shadow-emerald-500/10"
+                : "border-[#3A3F45]"
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#3A3F45] pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-blue-400">Order #TR-2026-0081</span>
+                    <span className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full ${
+                      deliverySettlementStatus === "SETTLED"
+                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                        : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                        ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                        : "bg-blue-500/20 text-blue-400 border border-blue-500/40"
+                    }`}>
+                      {deliverySettlementStatus === "SETTLED"
+                        ? "✅ SETTLED · DISBURSED ON AIR"
+                        : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                        ? "🔔 ARRIVED SAFELY · PIN VERIFIED"
+                        : "⏳ IN TRANSIT"}
+                    </span>
+                  </div>
+                  <h4 className="text-base font-bold text-white mt-1">
+                    Toyota Hilux 1KD Alternator Assembly (80A Denso)
+                  </h4>
+                  <p className="text-xs text-[#B5BAC0]">
+                    Customer: <strong className="text-white">Tadesse Garage (Bole)</strong> &bull; Courier: <strong className="text-white">Abebe Kebede (Motorcycle)</strong>
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <span className="text-xs text-[#B5BAC0]">Total Buyer Escrow Held</span>
+                  <div className="text-2xl font-black text-emerald-400">14,850.00 ETB</div>
+                  <span className="text-[10px] text-[#8A8F96]">Telebirr &amp; Chapa Escrow Vault</span>
+                </div>
+              </div>
+
+              {/* 3-Way Air Disbursement Split Details */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* 1. Shop Payout */}
+                <div className="p-4 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Store className="w-4 h-4 text-emerald-400" />
+                      1. Shop Payout (92%)
+                    </span>
+                    <span className="text-xs font-mono font-black text-emerald-400">
+                      13,662.00 ETB
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-1 text-[#B5BAC0]">
+                    <div>Vendor: <strong className="text-white">Alpha Auto Spares</strong></div>
+                    <div>Bank: <strong className="text-white">CBE (Commercial Bank)</strong></div>
+                    <div>Account: <strong className="font-mono text-white">100019283746</strong></div>
+                    <div className="text-[10px] text-emerald-400 font-semibold pt-1">
+                      Direct Air Payout to Merchant Bank Account
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Courier Payout (5% + 350 ETB) */}
+                <div className="p-4 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Bike className="w-4 h-4 text-[#FF6A3D]" />
+                      2. Courier Payout (5% + Fee)
+                    </span>
+                    <span className="text-xs font-mono font-black text-[#FF6A3D]">
+                      1,092.50 ETB
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-1 text-[#B5BAC0]">
+                    <div>Courier: <strong className="text-white">Abebe Kebede</strong></div>
+                    <div>5% Commission: <strong className="font-mono text-white">742.50 ETB</strong></div>
+                    <div>Base Delivery Fee: <strong className="font-mono text-white">350.00 ETB</strong></div>
+                    <div>Provider: <strong className="text-white">Telebirr (0922776655)</strong></div>
+                    <div className="text-[10px] text-[#FF6A3D] font-semibold pt-1">
+                      Instant Air Credit to Courier Wallet
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Platform Fee */}
+                <div className="p-4 rounded-2xl bg-[#050506] border border-[#3A3F45] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-purple-400" />
+                      3. Platform Fee (3%)
+                    </span>
+                    <span className="text-xs font-mono font-black text-purple-400">
+                      445.50 ETB
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-1 text-[#B5BAC0]">
+                    <div>Clearing: <strong className="text-white">TeraSync Network</strong></div>
+                    <div>Service: <strong className="text-white">Escrow &amp; Audit Chain</strong></div>
+                    <div>Status: <strong className="text-emerald-400 font-semibold">Protected</strong></div>
+                    <div className="text-[10px] text-purple-300 font-semibold pt-1">
+                      Platform Escrow Retained Share
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Verification & Action Trigger */}
+              <div className="p-4 rounded-2xl bg-[#050506]/90 border border-[#3A3F45] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white">
+                    <span>Customer Verifying Handshake ID:</span>
+                    <span className="font-mono bg-emerald-950/80 text-emerald-400 px-2 py-0.5 rounded border border-emerald-800 font-black">
+                      #7419
+                    </span>
+                    <span className="text-[11px] text-emerald-400 font-semibold">
+                      {deliverySettlementStatus === "ARRIVED_VERIFIED" || deliverySettlementStatus === "SETTLED" ? "✓ Verified by Garage" : "Pending Handshake"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#8A8F96]">
+                    {deliverySettlementStatus === "SETTLED"
+                      ? `Air payouts disbursed on ${airPayoutTx?.timestamp || "just now"}. CBE Tx: ${airPayoutTx?.shopTx || "CBE-AIR-982143"} | Telebirr Tx: ${airPayoutTx?.courierTx || "TB-AIR-582109"}`
+                      : deliverySettlementStatus === "ARRIVED_VERIFIED"
+                      ? "Handshake code matched. Admin authorization required to release the funds over the air to shop CBE & courier Telebirr."
+                      : "Item is in transit. Courier will collect the customer's 4-digit ID code upon safe arrival."}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {deliverySettlementStatus === "ARRIVED_VERIFIED" && (
+                    <button
+                      onClick={() => {
+                        setDeliverySettlementStatus("SETTLED");
+                        setShopBalance((prev) => prev + 13662);
+                        setCourierBalance((prev) => prev + 1092.5);
+                        const newTx = {
+                          shopTx: "CBE-AIR-" + Math.floor(100000 + Math.random() * 900000),
+                          courierTx: "TB-AIR-" + Math.floor(100000 + Math.random() * 900000),
+                          shopAmount: 13662,
+                          courierAmount: 1092.5,
+                          platformFee: 445.5,
+                          timestamp: new Date().toLocaleTimeString(),
+                        };
+                        setAirPayoutTx(newTx);
+                        setSuccessToast("🚀 Air Payouts Disbursed! 13,662.00 ETB passed to Alpha Spares (CBE) & 1,092.50 ETB passed to Courier Abebe (Telebirr).");
+                        setTimeout(() => setSuccessToast(null), 7000);
+                      }}
+                      className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition flex items-center gap-2 shadow-xl shadow-emerald-600/30 animate-pulse"
+                    >
+                      <span>Approve &amp; Release Air Payouts to Shop &amp; Courier</span>
+                    </button>
+                  )}
+
+                  {deliverySettlementStatus === "SETTLED" && (
+                    <div className="px-4 py-2 rounded-xl bg-emerald-950/80 border border-emerald-500/80 text-emerald-300 text-xs font-bold flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>Air Payouts Settled &amp; Transferred</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Applications Queue ── */}
         {activeTab === "applications" && (

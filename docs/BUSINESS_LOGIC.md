@@ -10,7 +10,7 @@
 
 Authentication is email + password + 6-digit email verification code sent via SMTP (or console provider in non-production environments).
 - **Identity:** Email address (normalized to lowercase, unique index).
-- **Passwords:** Minimum 10 characters, at least 1 letter and 1 number, hashed with Argon2id / bcrypt (cost 12+), common dictionary password rejection.
+- **Passwords:** Minimum 8 characters, at least 1 letter and 1 number, hashed with Argon2id / bcrypt (cost 12+), common dictionary password rejection.
 - **Verification & 2FA Codes:** 6-digit cryptographically secure codes (single-use, hashed at rest, 10-minute expiry, max 5 attempts, 60s resend cooldown, max 5 resends/hr) with separate purposes (`VERIFY_EMAIL`, `LOGIN`, `RESET_PASSWORD`).
 - **Phone Number:** Optional profile field (not the login identity). Required later during profile onboarding for courier dispatch / delivery contact and the 4-digit physical inspection escrow PIN.
 - **Trusted Devices:** Optional 30-day trusted device cookie token (stored hashed) that skips the login code on recognized devices.
