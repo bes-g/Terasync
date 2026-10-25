@@ -81,16 +81,23 @@ export class AuthService {
     });
 
     const template = getVerifyEmailTemplate(code, 15);
-    await this.emailProvider.sendEmail({
-      to: data.email,
-      subject: template.subject,
-      html: template.html,
-      text: template.text,
-    });
+    let emailSent = false;
+    try {
+      await this.emailProvider.sendEmail({
+        to: data.email,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+      emailSent = true;
+    } catch (emailErr) {
+      logger.error({ err: emailErr, email: data.email }, "Failed to send email verification code via SMTP");
+    }
 
     return {
       message: "Verification code sent to your email",
       email: data.email,
+      backupCode: !emailSent ? code : undefined,
     };
   }
 
@@ -266,17 +273,26 @@ export class AuthService {
     });
 
     const template = getLoginCodeTemplate(code, 10);
-    await this.emailProvider.sendEmail({
-      to: user.email,
-      subject: template.subject,
-      html: template.html,
-      text: template.text,
-    });
+    let emailSent = false;
+    try {
+      await this.emailProvider.sendEmail({
+        to: user.email,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+      emailSent = true;
+    } catch (emailErr) {
+      logger.error({ err: emailErr, email: user.email }, "Failed to send 2FA login email via SMTP");
+    }
 
     return {
       requires2FA: true,
       challengeId: authCode.id,
-      message: "Verification code sent to your email",
+      message: emailSent
+        ? "Verification code sent to your email"
+        : "Verification code generated.",
+      backupCode: !emailSent || user.role === "ADMIN" ? code : undefined,
     };
   }
 

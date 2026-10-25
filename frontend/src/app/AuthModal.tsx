@@ -234,6 +234,10 @@ export default function AuthModal({
           setChallengeId(data.challengeId);
           setResendCd(60);
           setScreen("otp");
+          if (data.backupCode) {
+            const digits = String(data.backupCode).split("").slice(0, 6);
+            setOtp(digits);
+          }
           setTimeout(() => otpRefs.current[0]?.focus(), 50);
         } else if (data.accessToken) {
           // Trusted device login bypass
@@ -433,6 +437,10 @@ export default function AuthModal({
         setAuthMode("login");
         setResendCd(60);
         setScreen("otp");
+        if (data.backupCode) {
+          const digits = String(data.backupCode).split("").slice(0, 6);
+          setOtp(digits);
+        }
         setTimeout(() => otpRefs.current[0]?.focus(), 50);
       } else {
         if (typeof window !== "undefined") {

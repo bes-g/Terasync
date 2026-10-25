@@ -145,6 +145,10 @@ export default function AdminPage() {
       if (data.requires2FA) {
         setChallengeId(data.challengeId);
         setStep("otp");
+        if (data.backupCode) {
+          const digits = String(data.backupCode).split("").slice(0, 6);
+          setOtp(digits);
+        }
       } else {
         setIsAuthenticated(true);
       }
