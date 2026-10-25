@@ -13,32 +13,25 @@ export class SmtpEmailProvider implements EmailProvider {
       );
     }
 
-    const isGmail = env.SMTP_HOST?.includes("gmail");
-    this.transporter = nodemailer.createTransport(
-      isGmail
-        ? {
-            service: "gmail",
-            auth: {
-              user: env.SMTP_USER,
-              pass: env.SMTP_PASS,
-            },
-            connectionTimeout: 8000,
-            greetingTimeout: 8000,
-            socketTimeout: 10000,
-          }
-        : {
-            host: env.SMTP_HOST,
-            port: env.SMTP_PORT || 587,
-            secure: env.SMTP_SECURE || false,
-            auth: {
-              user: env.SMTP_USER,
-              pass: env.SMTP_PASS,
-            },
-            connectionTimeout: 8000,
-            greetingTimeout: 8000,
-            socketTimeout: 10000,
-          },
-    );
+    const port = env.SMTP_PORT || 465;
+    const isSecure = port === 465 || env.SMTP_SECURE;
+
+    this.transporter = nodemailer.createTransport({
+      host: env.SMTP_HOST || "smtp.gmail.com",
+      port,
+      secure: isSecure,
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      family: 4, // Force IPv4 to prevent IPv6 DNS fallback connection timeouts
+      auth: {
+        user: env.SMTP_USER,
+        pass: env.SMTP_PASS,
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
+    } as any);
   }
 
   async sendEmail(options: SendEmailOptions): Promise<void> {

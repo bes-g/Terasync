@@ -90,6 +90,7 @@ export class AuthService {
       });
     } catch (emailErr) {
       logger.error({ err: emailErr, email: data.email }, "Failed to send email verification code via SMTP");
+      throw new AppError(500, "EMAIL_DELIVERY_FAILED", "Failed to send verification email. Please check your email and try again.");
     }
 
     return {
@@ -286,7 +287,6 @@ export class AuthService {
     });
 
     const template = getLoginCodeTemplate(code, 10);
-    let emailSent = false;
     try {
       await this.emailProvider.sendEmail({
         to: user.email,
@@ -294,17 +294,15 @@ export class AuthService {
         html: template.html,
         text: template.text,
       });
-      emailSent = true;
     } catch (emailErr) {
       logger.error({ err: emailErr, email: user.email }, "Failed to send 2FA login email via SMTP");
+      throw new AppError(500, "EMAIL_DELIVERY_FAILED", "Unable to deliver verification code to your email. Please try again in a moment.");
     }
 
     return {
       requires2FA: true,
       challengeId: authCode.id,
-      message: emailSent
-        ? "Verification code sent to your email"
-        : "Verification code generated.",
+      message: "Verification code sent to your email",
     };
   }
 
