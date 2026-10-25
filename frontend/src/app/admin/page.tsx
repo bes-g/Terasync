@@ -129,13 +129,18 @@ export default function AdminPage() {
       return;
     }
 
+    if (cleanEmail !== "besufkadtekalign@gmail.com") {
+      setError("Access Denied: Only authorized Central Operations Administrator (besufkadtekalign@gmail.com) can access this desk.");
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: cleanEmail, password: pass }),
+        body: JSON.stringify({ email: cleanEmail, password: pass, requiredRole: "ADMIN" }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -144,11 +149,8 @@ export default function AdminPage() {
 
       if (data.requires2FA) {
         setChallengeId(data.challengeId);
+        setOtp(["", "", "", "", "", ""]);
         setStep("otp");
-        if (data.backupCode) {
-          const digits = String(data.backupCode).split("").slice(0, 6);
-          setOtp(digits);
-        }
       } else {
         setIsAuthenticated(true);
       }
@@ -395,7 +397,16 @@ export default function AdminPage() {
               ← Public Storefront
             </Link>
             <button
-              onClick={() => setIsAuthenticated(false)}
+              onClick={() => {
+                setIsAuthenticated(false);
+                setStep("login");
+                setAdminPassword("");
+                setOtp(["", "", "", "", "", ""]);
+                if (typeof window !== "undefined") {
+                  localStorage.removeItem("terasync_access_token");
+                  localStorage.removeItem("terasync_refresh_token");
+                }
+              }}
               className="px-3 py-1.5 rounded-xl bg-[#15171A] hover:bg-[#1E2024] border border-[#3A3F45] text-xs text-[#B5BAC0] hover:text-white flex items-center gap-1.5 transition"
             >
               <LogOut className="w-3.5 h-3.5" />

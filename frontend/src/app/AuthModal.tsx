@@ -160,6 +160,15 @@ export default function AuthModal({
   const handleSelectRole = (r: AuthRole) => {
     setRole(r);
     setFormError("");
+    setFullName("");
+    setEmail("");
+    setPassword("");
+    setAdminUsername("");
+    setAdminPassword("");
+    setAdminError("");
+    setOtp(["", "", "", "", "", ""]);
+    setOtpError("");
+    setChallengeId(null);
     if (r === "admin") {
       setScreen("admin-login");
     } else {
@@ -223,6 +232,7 @@ export default function AuthModal({
           body: JSON.stringify({
             email: cleanEmail,
             password,
+            requiredRole: getBackendRole(role!),
           }),
         });
         const data = await res.json();
@@ -233,11 +243,8 @@ export default function AuthModal({
         if (data.requires2FA) {
           setChallengeId(data.challengeId);
           setResendCd(60);
+          setOtp(["", "", "", "", "", ""]);
           setScreen("otp");
-          if (data.backupCode) {
-            const digits = String(data.backupCode).split("").slice(0, 6);
-            setOtp(digits);
-          }
           setTimeout(() => otpRefs.current[0]?.focus(), 50);
         } else if (data.accessToken) {
           // Trusted device login bypass
@@ -409,6 +416,10 @@ export default function AuthModal({
       setAdminError("Please enter a valid admin email address");
       return;
     }
+    if (cleanUser !== "besufkadtekalign@gmail.com") {
+      setAdminError("Access Denied: Only authorized Central Operations Administrator can access this desk.");
+      return;
+    }
     if (!pass) {
       setAdminError("Please enter your admin password");
       return;
@@ -423,6 +434,7 @@ export default function AuthModal({
         body: JSON.stringify({
           email: cleanUser,
           password: pass,
+          requiredRole: "ADMIN",
         }),
       });
       const data = await res.json();
@@ -436,11 +448,8 @@ export default function AuthModal({
         setChallengeId(data.challengeId);
         setAuthMode("login");
         setResendCd(60);
+        setOtp(["", "", "", "", "", ""]);
         setScreen("otp");
-        if (data.backupCode) {
-          const digits = String(data.backupCode).split("").slice(0, 6);
-          setOtp(digits);
-        }
         setTimeout(() => otpRefs.current[0]?.focus(), 50);
       } else {
         if (typeof window !== "undefined") {

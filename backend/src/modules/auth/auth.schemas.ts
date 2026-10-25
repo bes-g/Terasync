@@ -15,6 +15,7 @@ export const verifyEmailSchema = z.object({
 export const loginSchema = z.object({
   email: z.string().email().transform((val) => val.toLowerCase().trim()),
   password: z.string().min(1, "Password is required"),
+  requiredRole: z.enum(["BUYER", "VENDOR", "COURIER", "ADMIN"]).optional(),
 });
 
 export const verifyLoginSchema = z.object({

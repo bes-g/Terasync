@@ -81,7 +81,6 @@ export class AuthService {
     });
 
     const template = getVerifyEmailTemplate(code, 15);
-    let emailSent = false;
     try {
       await this.emailProvider.sendEmail({
         to: data.email,
@@ -89,7 +88,6 @@ export class AuthService {
         html: template.html,
         text: template.text,
       });
-      emailSent = true;
     } catch (emailErr) {
       logger.error({ err: emailErr, email: data.email }, "Failed to send email verification code via SMTP");
     }
@@ -97,7 +95,6 @@ export class AuthService {
     return {
       message: "Verification code sent to your email",
       email: data.email,
-      backupCode: !emailSent ? code : undefined,
     };
   }
 
@@ -171,7 +168,12 @@ export class AuthService {
     };
   }
 
-  async login(data: { email: string; password: string; trustedDeviceToken?: string }) {
+  async login(data: {
+    email: string;
+    password: string;
+    trustedDeviceToken?: string | undefined;
+    requiredRole?: string | undefined;
+  }) {
     const user = await prisma.user.findUnique({
       where: { email: data.email },
     });
@@ -180,6 +182,17 @@ export class AuthService {
     if (!user) {
       await dummyTimingEqualize();
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+    }
+
+    // Role isolation enforcement
+    if (data.requiredRole) {
+      if (data.requiredRole === "ADMIN") {
+        if (user.role !== "ADMIN" || user.email.toLowerCase() !== "besufkadtekalign@gmail.com") {
+          throw new AppError(403, "FORBIDDEN", "Access Denied: Only authorized Central Operations Administrator (besufkadtekalign@gmail.com) can access this desk.");
+        }
+      } else if (user.role !== data.requiredRole) {
+        throw new AppError(403, "FORBIDDEN", `Access Denied: This account is registered as ${user.role}, not ${data.requiredRole}.`);
+      }
     }
 
     // Check account lockout
@@ -292,7 +305,6 @@ export class AuthService {
       message: emailSent
         ? "Verification code sent to your email"
         : "Verification code generated.",
-      backupCode: !emailSent || user.role === "ADMIN" ? code : undefined,
     };
   }
 

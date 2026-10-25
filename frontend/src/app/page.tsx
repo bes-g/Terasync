@@ -507,6 +507,18 @@ export default function TeraSyncPlatform() {
     setPartnerDropdownOpen(false);
   };
 
+  const handleSignOut = () => {
+    setCurrentUser(null);
+    setCurrentRole("landing");
+    setMobileMenuOpen(false);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("terasync_access_token");
+      localStorage.removeItem("terasync_refresh_token");
+    }
+    setRfqSuccessToast("Signed out successfully.");
+    setTimeout(() => setRfqSuccessToast(null), 4000);
+  };
+
   const visibleNavItems = NAV_ITEMS.filter((item) => {
     if (!item.rolesAllowed) return true; // public
     return currentUser && item.rolesAllowed.includes(currentUser.role);
@@ -993,12 +1005,7 @@ export default function TeraSyncPlatform() {
                   {currentUser.firstName ? ` (${String(currentUser.firstName)})` : currentUser.shopName ? ` (${String(currentUser.shopName)})` : ""}
                 </button>
                 <button
-                  onClick={() => {
-                    setCurrentUser(null);
-                    setCurrentRole("landing");
-                    setRfqSuccessToast("Signed out successfully.");
-                    setTimeout(() => setRfqSuccessToast(null), 5000);
-                  }}
+                  onClick={handleSignOut}
                   className="hover:text-red-400 text-xs text-[#B5BAC0] transition px-1"
                   title="Sign out"
                 >
@@ -1248,13 +1255,7 @@ export default function TeraSyncPlatform() {
                     </div>
                   </div>
                   <button
-                    onClick={() => {
-                      setCurrentUser(null);
-                      setCurrentRole("landing");
-                      setMobileMenuOpen(false);
-                      setRfqSuccessToast("Signed out successfully.");
-                      setTimeout(() => setRfqSuccessToast(null), 4000);
-                    }}
+                    onClick={handleSignOut}
                     className="text-xs font-semibold text-[#B5BAC0] hover:text-red-400 py-1 px-2"
                   >
                     Sign out
@@ -2822,8 +2823,9 @@ export default function TeraSyncPlatform() {
                   Explore Systems &amp; Parts
                 </button>
                 <button
-                  onClick={() => setCurrentRole("landing")}
-                  className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs"
+                  onClick={handleSignOut}
+                  title="Sign out"
+                  className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] hover:text-red-400 text-xs transition"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -3181,8 +3183,9 @@ export default function TeraSyncPlatform() {
                   <div className="text-sm font-bold text-emerald-400">42,650.00 ETB</div>
                 </div>
                 <button
-                  onClick={() => setCurrentRole("landing")}
-                  className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs"
+                  onClick={handleSignOut}
+                  title="Sign out"
+                  className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] hover:text-red-400 text-xs transition"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -3496,8 +3499,9 @@ export default function TeraSyncPlatform() {
               </div>
 
               <button
-                onClick={() => setCurrentRole("landing")}
-                className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs self-start sm:self-auto"
+                onClick={handleSignOut}
+                title="Sign out"
+                className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] hover:text-red-400 text-xs self-start sm:self-auto transition"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -3651,8 +3655,9 @@ export default function TeraSyncPlatform() {
               </div>
 
               <button
-                onClick={() => setCurrentRole("landing")}
-                className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] text-xs self-start sm:self-auto"
+                onClick={handleSignOut}
+                title="Sign out"
+                className="p-2 rounded-xl bg-[#0F1012] hover:bg-[#1E2024] border border-[#3A3F45] text-[#B5BAC0] hover:text-red-400 text-xs self-start sm:self-auto transition"
               >
                 <LogOut className="w-4 h-4" />
               </button>
